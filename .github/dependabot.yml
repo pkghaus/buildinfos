@@ -1,0 +1,24 @@
+version: 2
+
+updates:
+  # Actions are pinned to commit SHAs and actionlint by image digest, which is
+  # what stops a moved tag changing what deploys this worker. It is also what
+  # stops any of them updating on their own.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+
+  # wrangler is pinned exactly and runs with a token that can deploy a worker
+  # on the archive's host. Pinning is what stops it changing on its own; this
+  # is what stops it going stale. The directory is /worker, not /: package.json
+  # lives beside the worker, and a config pointing at the root finds nothing
+  # and reports nothing, which is how apt went without npm coverage until now.
+  - package-ecosystem: npm
+    directory: /worker
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps"
