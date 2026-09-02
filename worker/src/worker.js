@@ -179,9 +179,28 @@ from, and a <code>.source</code> naming the upstream repository, tag and commit.
 <h2>What you can do with one</h2>
 <p>Rebuild the package and compare. <code>debrebuild</code> resolves the recorded
 environment from <code>snapshot.debian.org</code>, unpacks the <code>.dsc</code>
-published beside the record, rebuilds, and checks every checksum. The whole procedure,
-with its container, is <code>verify/</code> in
-<a href="https://github.com/pkghaus/apt">pkghaus/apt</a>.</p>
+published beside the record, rebuilds, and checks every checksum. Fetch a record
+and the source beside it, then run the procedure from
+<a href="https://github.com/pkghaus/apt">pkghaus/apt</a>, which carries the
+container it needs:</p>
+<pre><span class="c"># the four files, all from one directory here</span>
+B=https://buildinfos.pkg.haus/buildinfo-pool/m/mandown
+mkdir mandown &amp;&amp; cd mandown
+curl -fsSLO "$B/mandown_1.0.5.2-2~haus13+1_amd64.buildinfo"
+curl -fsSLO "$B/mandown_1.0.5.2-2~haus13+1.dsc"
+curl -fsSLO "$B/mandown_1.0.5.2-2~haus13+1.debian.tar.xz"
+curl -fsSLO "$B/mandown_1.0.5.2.orig.tar.gz"
+cd ..
+
+<span class="c"># rebuild and compare</span>
+git clone https://github.com/pkghaus/apt
+apt/verify/rebuild.sh mandown</pre>
+<p>What a match looks like, run against this record on 2026-09-02:</p>
+<pre>checking mandown_1.0.5.2-2~haus13+1_amd64.deb: size... sha256... md5... sha1... all OK</pre>
+<p>The rebuilt <code>.deb</code> was byte-identical to the one
+<a href="https://apt.pkg.haus">apt.pkg.haus</a> serves. You need Docker and root,
+because the rebuild installs an exact set of package versions and then builds;
+the container is the throwaway system it is allowed to change.</p>
 <h2>What these files do not tell you</h2>
 <p><strong>The compiler is named in the source, not the record.</strong> Go and Rust
 both fetch their own toolchain, so <code>Installed-Build-Depends</code> names the
