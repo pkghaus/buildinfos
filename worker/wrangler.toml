@@ -1,0 +1,29 @@
+name = "pkghaus-buildinfos"
+main = "src/worker.js"
+compatibility_date = "2026-08-01"
+
+# The whole host. Nothing else claims a pattern here, unlike apt.pkg.haus where
+# two narrower scripts win on specificity.
+#
+# Set both routes to "Fail open" in the dashboard (Workers & Pages ->
+# pkghaus-buildinfos -> Settings). A bypassed request reaches no origin, so it
+# 404s rather than 500s, and what actually keeps this up is that provenance
+# traffic is a rounding error against the Workers Free daily limit.
+routes = [
+  { pattern = "buildinfos.pkg.haus/*", zone_name = "pkg.haus" },
+]
+
+# The archive's bucket, read-only from here. The records are written by
+# pkghaus/apt's publish-buildinfo.sh during an ingest; this Worker never writes,
+# which is the point of it being a separate script from pkghaus-archive.
+[[r2_buckets]]
+binding = "ARCHIVE"
+bucket_name = "pkghaus-apt"
+
+# No [assets] block on purpose. Every page here is rendered from a LIST, so
+# there is no tree to keep in sync with the bucket and no deploy that can
+# silently publish an empty site.
+
+[observability]
+enabled = true
+head_sampling_rate = 1

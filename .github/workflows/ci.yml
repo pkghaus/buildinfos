@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      # npm ci, never npm install: the lockfile is the pin, and a deploy token
+      # that can publish the Worker serving this host should not be handing
+      # resolution to whatever npm feels like today.
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Pinned by digest rather than taken from the runner image, so a new
+      # release of actionlint cannot turn a green branch red on its own.
+      - name: actionlint
+        run: |
+          docker run --rm \
+            --volume "$PWD:/repo" \
+            --workdir /repo \
+            rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -color
+
+      # PyYAML's safe_load accepts duplicate mapping keys and GitHub does not,
+      # so "it parses locally" proves nothing without this.
+      - name: Reject duplicate YAML keys
+        run: python3 tests/yamlcheck.py .github/workflows/*.yml
