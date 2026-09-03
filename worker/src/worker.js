@@ -301,10 +301,20 @@ export default {
     // would otherwise store or return a body-less answer under it.
     const cacheKey = new Request(`https://buildinfos.pkg.haus${path}`);
     const cache = caches.default;
+    // Every conditional, not just the "has it changed" pair. if-match and
+    // if-unmodified-since were missing, so a request carrying one was treated
+    // as cacheable, took a cache hit, and got a 200 -- which is how the cache
+    // silently undid the 412 that shipped alongside it. Measured live: 412 on
+    // every cache miss, 200 on every HIT, across eight requests.
+    //
+    // Only R2 can answer a precondition, because only R2 knows the current
+    // object. A cached copy cannot, so these have to reach it.
     const conditional =
       request.headers.has("range") ||
       request.headers.has("if-none-match") ||
-      request.headers.has("if-modified-since");
+      request.headers.has("if-modified-since") ||
+      request.headers.has("if-match") ||
+      request.headers.has("if-unmodified-since");
     const cacheable = request.method === "GET" && !conditional;
 
     if (cacheable) {
