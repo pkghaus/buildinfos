@@ -287,78 +287,131 @@ export default {
 
     if (!env.ARCHIVE) return new Response("Not configured", { status: 503 });
 
-    // The flat index. Generated per request from a LIST rather than stored,
-    // so it cannot drift from the pool it describes.
-    if (path === `/${LIST_FILE}`) {
-      const { objects } = await listAll(env.ARCHIVE, PREFIX + POOL);
-      const body = objects.map((o) => o.key.slice(PREFIX.length)).sort().join("\n") + "\n";
-      return new Response(body, {
-        headers: {
-          "content-type": "text/plain; charset=utf-8",
-          "cache-control": `public, max-age=${LISTING_MAX_AGE}`,
-          ...SECURITY_HEADERS,
-        },
-      });
+    // A response this Worker builds itself never reaches the CDN cache that
+    // the zone's cache rules configure: those govern origin fetches, and
+    // nothing sits behind this route. Without the Cache API every record
+    // download and every listing render was a live R2 operation, and a
+    // listing render is a LIST. pkghaus-archive learned this at the R2
+    // cutover and pkghaus-stats was written with it; this Worker is the copy
+    // that did not inherit it.
+    //
+    // Keyed on the decoded path so the encoded and literal spellings of a
+    // version's '~' and '+' share one entry and a query string cannot
+    // multiply them. HEAD is excluded rather than sharing the GET's key: it
+    // would otherwise store or return a body-less answer under it.
+    const cacheKey = new Request(`https://buildinfos.pkg.haus${path}`);
+    const cache = caches.default;
+    const conditional =
+      request.headers.has("range") ||
+      request.headers.has("if-none-match") ||
+      request.headers.has("if-modified-since");
+    const cacheable = request.method === "GET" && !conditional;
+
+    if (cacheable) {
+      const hit = await cache.match(cacheKey);
+      if (hit) return hit;
     }
 
-    if (path === "/" || path === "") {
-      const { objects } = await listAll(env.ARCHIVE, PREFIX + POOL);
-      const listBytes = objects.reduce(
-        (n, o) => n + o.key.slice(PREFIX.length).length + 1, 0);
-      return html(renderRoot(listBytes), LISTING_MAX_AGE);
+    const response = await serve(request, env, path);
+
+    // Only a complete, successful body. A 206 is a fragment, a 304 is not the
+    // object, and a 404 page must not outlive the publish that fills the gap.
+    if (cacheable && response.status === 200) {
+      ctx.waitUntil(cache.put(cacheKey, response.clone()));
     }
-
-    if (!path.startsWith(`/${POOL}`)) return notFound();
-
-    // A trailing slash is a directory: one level, via the delimiter.
-    if (path.endsWith("/")) {
-      const prefix = PREFIX + path.slice(1);
-      const { objects, prefixes } = await listAll(env.ARCHIVE, prefix, "/");
-      if (objects.length === 0 && prefixes.length === 0) return notFound();
-      const dirs = prefixes.map((p) => p.slice(prefix.length)).sort();
-      const files = objects
-        .map((o) => ({ name: o.key.slice(prefix.length), size: o.size }))
-        .filter((f) => f.name !== "")
-        .sort((a, b) => a.name.localeCompare(b.name));
-      return html(renderListing(path, dirs, files), LISTING_MAX_AGE);
-    }
-
-    const key = PREFIX + path.slice(1);
-    const range = request.headers.get("range");
-
-    // R2 wants a Headers object here, not the header's string value -- handed a
-    // string it throws, which is a 500 on every ranged request. HEAD passes no
-    // range at all: asking R2 for a slice it will not send wastes the read.
-    const object = await env.ARCHIVE.get(key, {
-      onlyIf: request.headers,
-      range: request.method === "HEAD" ? undefined : request.headers,
-    });
-    if (!object) return notFound();
-
-    const headers = new Headers(SECURITY_HEADERS);
-    object.writeHttpMetadata(headers);
-    headers.set("etag", object.httpEtag);
-    headers.set("content-type", contentType(key));
-    headers.set("cache-control", `public, max-age=${IMMUTABLE_MAX_AGE}, immutable`);
-    headers.set("accept-ranges", "bytes");
-
-    // A bodiless result is R2 answering the onlyIf, not a missing object.
-    if (!("body" in object)) return new Response(null, { status: 304, headers });
-
-    // 206 is decided by what the CLIENT asked for. R2 reports `range` on the
-    // result whether or not one was requested, so keying the status off the
-    // response alone answers every plain GET with a partial.
-    if (range && object.range) {
-      const [start, end] = resolveRange(object.range, object.size);
-      headers.set("content-range", `bytes ${start}-${end}/${object.size}`);
-      headers.set("content-length", String(end - start + 1));
-      return new Response(object.body, { status: 206, headers });
-    }
-
-    return new Response(request.method === "HEAD" ? null : object.body,
-      { status: 200, headers });
+    return response;
   },
 };
+
+async function serve(request, env, path) {
+
+  // The flat index. Generated per request from a LIST rather than stored,
+  // so it cannot drift from the pool it describes.
+  if (path === `/${LIST_FILE}`) {
+    const { objects } = await listAll(env.ARCHIVE, PREFIX + POOL);
+    const body = objects.map((o) => o.key.slice(PREFIX.length)).sort().join("\n") + "\n";
+    return new Response(body, {
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": `public, max-age=${LISTING_MAX_AGE}`,
+        ...SECURITY_HEADERS,
+      },
+    });
+  }
+
+  if (path === "/" || path === "") {
+    const { objects } = await listAll(env.ARCHIVE, PREFIX + POOL);
+    const listBytes = objects.reduce(
+      (n, o) => n + o.key.slice(PREFIX.length).length + 1, 0);
+    return html(renderRoot(listBytes), LISTING_MAX_AGE);
+  }
+
+  if (!path.startsWith(`/${POOL}`)) return notFound();
+
+  // A trailing slash is a directory: one level, via the delimiter.
+  if (path.endsWith("/")) {
+    const prefix = PREFIX + path.slice(1);
+    const { objects, prefixes } = await listAll(env.ARCHIVE, prefix, "/");
+    if (objects.length === 0 && prefixes.length === 0) return notFound();
+    const dirs = prefixes.map((p) => p.slice(prefix.length)).sort();
+    const files = objects
+      .map((o) => ({ name: o.key.slice(prefix.length), size: o.size }))
+      .filter((f) => f.name !== "")
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return html(renderListing(path, dirs, files), LISTING_MAX_AGE);
+  }
+
+  const key = PREFIX + path.slice(1);
+  const range = request.headers.get("range");
+
+  // R2 wants a Headers object here, not the header's string value -- handed a
+  // string it throws, which is a 500 on every ranged request. HEAD passes no
+  // range at all: asking R2 for a slice it will not send wastes the read.
+  const object = await env.ARCHIVE.get(key, {
+    onlyIf: request.headers,
+    range: request.method === "HEAD" ? undefined : request.headers,
+  });
+  if (!object) return notFound();
+
+  const headers = new Headers(SECURITY_HEADERS);
+  object.writeHttpMetadata(headers);
+  headers.set("etag", object.httpEtag);
+  headers.set("content-type", contentType(key));
+  headers.set("cache-control", `public, max-age=${IMMUTABLE_MAX_AGE}, immutable`);
+  headers.set("accept-ranges", "bytes");
+
+  // A bodiless result is R2 answering the onlyIf, not a missing object.
+  // Which status that is depends on which condition failed: the "has it
+  // changed" pair means the caller's copy is current, the "only if it is
+  // still this" pair means it is not. Collapsing both into 304 told a
+  // failed If-Match that nothing had changed.
+  if (!("body" in object)) {
+    const fresh =
+      request.headers.has("if-none-match") ||
+      request.headers.has("if-modified-since");
+    return new Response(null, { status: fresh ? 304 : 412, headers });
+  }
+
+  // 206 is decided by what the CLIENT asked for. R2 reports `range` on the
+  // result whether or not one was requested, so keying the status off the
+  // response alone answers every plain GET with a partial.
+  if (range && object.range) {
+    const [start, end] = resolveRange(object.range, object.size);
+    headers.set("content-range", `bytes ${start}-${end}/${object.size}`);
+    headers.set("content-length", String(end - start + 1));
+    return new Response(object.body, { status: 206, headers });
+  }
+
+  // HEAD carries the size or it tells the caller nothing, which is the
+  // main reason to send one. The 200 path below sets it from the body.
+  if (request.method === "HEAD") {
+    headers.set("content-length", String(object.size));
+    return new Response(null, { status: 200, headers });
+  }
+
+  headers.set("content-length", String(object.size));
+  return new Response(object.body, { status: 200, headers });
+}
 
 // Measured against live R2 on 2026-09-02, all four cases: the result's range is
 // always {offset, length}, both already resolved to numbers, whatever the
