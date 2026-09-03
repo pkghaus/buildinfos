@@ -464,3 +464,57 @@ test("a conditional request is answered by R2, not the cache", async () => {
   assert.equal(r.status, 304);
   assert.equal(reads.length, before + 1, "a conditional must reach R2");
 });
+
+// The gap that let the cache undo the 412. Every precondition test above
+// starts from resetCache(), so the cache was never in a position to answer
+// one. Live, `If-Match` returned 412 on a cache miss and 200 on a HIT.
+//
+// Only R2 can evaluate a precondition, because only R2 knows the object as it
+// is now. These assert the warm-cache path specifically.
+test("a failed if-match is still a 412 once the object is cached", async () => {
+  resetCache();
+  const path = "/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo";
+  await get(path);
+  await settle();
+  assert.equal(store.size, 1, "the object has to be cached for this to mean anything");
+
+  const r = await get(path, { headers: { "if-match": '"stale"' } });
+  assert.equal(r.status, 412);
+});
+
+test("a matching if-none-match is still a 304 once the object is cached", async () => {
+  resetCache();
+  const path = "/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo";
+  await get(path);
+  await settle();
+  const before = reads.length;
+
+  const r = await get(path, { headers: { "if-none-match": '"x"' } });
+  assert.equal(r.status, 304);
+  assert.equal(reads.length, before + 1, "a conditional must reach R2, not the cache");
+});
+
+test("if-unmodified-since reaches R2 rather than the cache", async () => {
+  resetCache();
+  const path = "/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo";
+  await get(path);
+  await settle();
+  const before = reads.length;
+
+  await get(path, { headers: { "if-unmodified-since": "Thu, 01 Jan 1970 00:00:00 GMT" } });
+  assert.equal(reads.length, before + 1);
+});
+
+// And a warm cache must still serve the plain GET it is there for, or the fix
+// above would have been "disable the cache".
+test("a warm cache still answers a plain GET without touching R2", async () => {
+  resetCache();
+  const path = "/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo";
+  await get(path);
+  await settle();
+  const before = reads.length;
+
+  const r = await get(path);
+  assert.equal(r.status, 200);
+  assert.equal(reads.length, before, "the plain GET must still come from the cache");
+});
