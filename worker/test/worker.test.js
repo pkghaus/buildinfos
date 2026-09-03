@@ -10,7 +10,7 @@ import worker, { contentType, humanSize, listAll, renderRoot, renderListing, res
 
 // Enough of R2 to drive the Worker: prefix and delimiter semantics, ranges and
 // conditional gets are what the real one is asked for.
-function fakeBucket(keys) {
+function fakeBucket(keys, reads = []) {
   const objects = new Map(
     Object.entries(keys).map(([k, v]) => [k, typeof v === "string" ? v : v.body]));
   return {
@@ -39,6 +39,7 @@ function fakeBucket(keys) {
       };
     },
     async get(key, opts = {}) {
+      reads.push(key);
       if (!objects.has(key)) return null;
       const body = objects.get(key);
       const size = body.length;
@@ -80,6 +81,12 @@ function fakeBucket(keys) {
       const inm = opts.onlyIf instanceof Headers ? opts.onlyIf.get("if-none-match") : null;
       if (inm === etag) return base;
 
+      // A FAILED if-match is bodiless too, and it is not a 304: the caller
+      // asked for the object only while it was still the one it had. R2
+      // reports both the same way, so the status is the Worker's to decide.
+      const im = opts.onlyIf instanceof Headers ? opts.onlyIf.get("if-match") : null;
+      if (im && im !== etag) return base;
+
       return { ...base, body: slice };
     },
   };
@@ -96,8 +103,27 @@ const FIXTURE = {
   "buildinfos/stray-object.txt": "should never be served",
 };
 
-const env = { ARCHIVE: fakeBucket(FIXTURE) };
-const get = (p, init) => worker.fetch(new Request(`https://buildinfos.pkg.haus${p}`, init), env, {});
+const reads = [];
+const env = { ARCHIVE: fakeBucket(FIXTURE, reads) };
+
+// A cache that stores, not a pair of no-ops: the point of these tests is which
+// responses come back on a second request and which R2 read never happens.
+const store = new Map();
+const tasks = [];
+globalThis.caches = {
+  default: {
+    async match(req) {
+      const hit = store.get(req.url);
+      return hit ? hit.clone() : undefined;
+    },
+    async put(req, res) { store.set(req.url, res.clone()); },
+  },
+};
+const ctx = { waitUntil: (p) => tasks.push(p) };
+const settle = () => Promise.allSettled(tasks.splice(0));
+const resetCache = () => { store.clear(); reads.length = 0; tasks.length = 0; };
+
+const get = (p, init) => worker.fetch(new Request(`https://buildinfos.pkg.haus${p}`, init), env, ctx);
 
 test("content types are what a browser should render, not download", () => {
   assert.equal(contentType("x.buildinfo"), "text/plain; charset=utf-8");
@@ -205,7 +231,7 @@ test("every response carries the security headers", async () => {
 });
 
 test("an unconfigured binding says so rather than 404ing", async () => {
-  const r = await worker.fetch(new Request("https://buildinfos.pkg.haus/"), {}, {});
+  const r = await worker.fetch(new Request("https://buildinfos.pkg.haus/"), {}, ctx);
   assert.equal(r.status, 503);
 });
 
@@ -313,4 +339,128 @@ test("every page carries the header, and listings carry it once", async () => {
   assert.doesNotMatch(listing, /class="crumb"/, "the path belongs in the h1, not below it");
   const root = await (await get("/")).text();
   assert.match(root, /<h1><a href="\/">buildinfos/);
+});
+
+// A failed precondition is not a 304. The archive Worker has always
+// distinguished these; this one collapsed both into 304, which told a caller
+// whose If-Match had just failed that nothing had changed.
+test("a failed if-match is a 412, not a 304", async () => {
+  resetCache();
+  const r = await get("/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo",
+    { headers: { "if-match": '"stale"' } });
+  assert.equal(r.status, 412);
+  assert.equal(await r.text(), "");
+});
+
+test("a matching if-none-match is still a 304", async () => {
+  resetCache();
+  const r = await get("/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo",
+    { headers: { "if-none-match": '"x"' } });
+  assert.equal(r.status, 304);
+});
+
+// HEAD carries the size or it tells the caller nothing, which is the one
+// reason to send one instead of a GET.
+test("HEAD reports the object's size", async () => {
+  resetCache();
+  const r = await get("/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo",
+    { method: "HEAD" });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("content-length"), "12");
+  assert.equal(await r.text(), "");
+});
+
+test("a full GET reports the size too", async () => {
+  resetCache();
+  const r = await get("/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo");
+  assert.equal(r.headers.get("content-length"), "12");
+});
+
+// Nothing behind this route builds these responses for us, so without the
+// Cache API every download and every listing render was a live R2 operation.
+test("a record is served from the cache on the second request", async () => {
+  resetCache();
+  const path = "/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo";
+  const first = await get(path);
+  assert.equal(first.status, 200);
+  await settle();
+  assert.equal(reads.length, 1);
+
+  const second = await get(path);
+  assert.equal(second.status, 200);
+  assert.equal(await second.text(), "Format: 1.0\n");
+  // The read that did not happen is the whole point.
+  assert.equal(reads.length, 1, "the second request must not reach R2");
+});
+
+test("a listing is cached too, and a listing render is a LIST", async () => {
+  resetCache();
+  const first = await get("/buildinfo-pool/c/croc/");
+  assert.equal(first.status, 200);
+  await settle();
+  assert.ok(store.has("https://buildinfos.pkg.haus/buildinfo-pool/c/croc/"));
+});
+
+// The encoded and literal spellings of a version's '~' and '+' must share one
+// entry, or half the purge and half the cache are addressing a different key.
+test("the cache key is the decoded path", async () => {
+  resetCache();
+  await get("/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo");
+  await settle();
+  assert.deepEqual([...store.keys()],
+    ["https://buildinfos.pkg.haus/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo"]);
+});
+
+test("a query string does not multiply cache entries", async () => {
+  resetCache();
+  await get("/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo?a=1");
+  await settle();
+  await get("/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo?b=2");
+  assert.equal(store.size, 1);
+  assert.equal(reads.length, 1, "the second spelling must not reach R2");
+});
+
+// What must never be stored: a fragment, a bodiless answer, a HEAD, and a 404
+// that a later publish would falsify.
+test("a 404 is not cached", async () => {
+  resetCache();
+  const r = await get("/buildinfo-pool/n/nope/nope_1-1_amd64.buildinfo");
+  assert.equal(r.status, 404);
+  await settle();
+  assert.equal(store.size, 0);
+});
+
+test("a ranged GET is neither served from nor stored in the cache", async () => {
+  resetCache();
+  const path = "/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo";
+  const r = await get(path, { headers: { range: "bytes=0-3" } });
+  assert.equal(r.status, 206);
+  await settle();
+  assert.equal(store.size, 0);
+
+  // And a ranged request must still reach R2 even once a full GET is cached.
+  await get(path);
+  await settle();
+  const before = reads.length;
+  const ranged = await get(path, { headers: { range: "bytes=0-3" } });
+  assert.equal(ranged.status, 206);
+  assert.equal(reads.length, before + 1, "a range must reach R2, not the cache");
+});
+
+test("HEAD is not stored under the GET's key", async () => {
+  resetCache();
+  await get("/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo", { method: "HEAD" });
+  await settle();
+  assert.equal(store.size, 0);
+});
+
+test("a conditional request is answered by R2, not the cache", async () => {
+  resetCache();
+  const path = "/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo";
+  await get(path);
+  await settle();
+  const before = reads.length;
+  const r = await get(path, { headers: { "if-none-match": '"x"' } });
+  assert.equal(r.status, 304);
+  assert.equal(reads.length, before + 1, "a conditional must reach R2");
 });
