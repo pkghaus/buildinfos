@@ -277,6 +277,16 @@ function html(bodyText, maxAge, status = 200) {
   });
 }
 
+// R2 signals an unsatisfiable range by throwing, with no typed error to match
+// on. Matches both the message and the code it actually emits, because either
+// alone is one upstream wording change away from silently reverting this to a
+// 500. Captured verbatim from a production log line:
+//   get: The requested range is not satisfiable (10039)
+export function isUnsatisfiableRange(e) {
+  const msg = String(e?.message ?? e);
+  return msg.includes("range is not satisfiable") || msg.includes("10039");
+}
+
 export default {
   async fetch(request, env, ctx) {
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -377,10 +387,35 @@ async function serve(request, env, path) {
   // R2 wants a Headers object here, not the header's string value -- handed a
   // string it throws, which is a 500 on every ranged request. HEAD passes no
   // range at all: asking R2 for a slice it will not send wastes the read.
-  const object = await env.ARCHIVE.get(key, {
-    onlyIf: request.headers,
-    range: request.method === "HEAD" ? undefined : request.headers,
-  });
+  let object;
+  try {
+    object = await env.ARCHIVE.get(key, {
+      onlyIf: request.headers,
+      range: request.method === "HEAD" ? undefined : request.headers,
+    });
+  } catch (e) {
+    // R2 THROWS for a range it cannot satisfy rather than returning null, and
+    // an unhandled throw here is a 500 -- telling a client with a stale partial
+    // download that the server is broken. RFC 9110 says 416 with the object's
+    // real length, which is what lets the client discard its partial and start
+    // again.
+    //
+    // Found 2026-09-04 alongside the same bug in pkghaus/apt, where it was
+    // worse: there the throw was caught and rendered as 404, which failed
+    // `apt update` outright for clients in fifteen countries. Nothing here is
+    // load-bearing in that way, but a 500 is still the wrong answer to a
+    // well-formed question.
+    if (!isUnsatisfiableRange(e)) throw e;
+    const head = await env.ARCHIVE.head(key);
+    if (!head) return notFound();
+    const headers = new Headers(SECURITY_HEADERS);
+    headers.set("content-range", `bytes */${head.size}`);
+    headers.set("accept-ranges", "bytes");
+    // Specific to this request's Range header: never store it and replay it to
+    // a client that asked for something else.
+    headers.set("cache-control", "no-store");
+    return new Response(null, { status: 416, headers });
+  }
   if (!object) return notFound();
 
   const headers = new Headers(SECURITY_HEADERS);

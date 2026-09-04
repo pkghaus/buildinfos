@@ -38,11 +38,26 @@ function fakeBucket(keys, reads = []) {
         cursor: String(end),
       };
     },
+    async head(key) {
+      if (!objects.has(key)) return null;
+      return { size: objects.get(key).length, key };
+    },
     async get(key, opts = {}) {
       reads.push(key);
       if (!objects.has(key)) return null;
       const body = objects.get(key);
       const size = body.length;
+
+      // R2 does not return null for a range it cannot satisfy -- it THROWS,
+      // with this exact wording, copied from a production log line rather than
+      // invented. A fake that threw something else would let the matcher rot
+      // with no test noticing.
+      const rangeHeader =
+        opts.range instanceof Headers ? opts.range.get("range") : null;
+      const startOffset = rangeHeader && /^bytes=(\d+)-/.exec(rangeHeader);
+      if (startOffset && Number(startOffset[1]) >= size) {
+        throw new Error("get: The requested range is not satisfiable (10039)");
+      }
 
       // Real R2 takes an R2Range or a Headers here and throws on a string.
       // Handed the header's value instead of the headers, every ranged request
@@ -517,4 +532,90 @@ test("a warm cache still answers a plain GET without touching R2", async () => {
   const r = await get(path);
   assert.equal(r.status, 200);
   assert.equal(reads.length, before, "the plain GET must still come from the cache");
+});
+
+// A client resuming a partial download sends a Range; if the file changed size
+// that offset can land past the end, R2 throws, and an unhandled throw is a
+// 500. The archive Worker had the same bug in a worse form -- it answered 404,
+// which failed `apt update` outright for clients in fifteen countries -- fixed
+// the same day in pkghaus/apt.
+const RECORD = "/buildinfo-pool/c/croc/croc_11.3.6-1_amd64.buildinfo";
+const RECORD_SIZE = FIXTURE["buildinfos" + RECORD].length;
+
+test("a range past the end is 416 with the real length, not 500", async () => {
+  resetCache();
+  const res = await worker.fetch(
+    new Request("https://buildinfos.pkg.haus" + RECORD, {
+      headers: { range: `bytes=${RECORD_SIZE}-` },
+    }), env, ctx);
+  await settle();
+  assert.equal(res.status, 416, "a 500 blames the server for the client's stale offset");
+  assert.equal(res.headers.get("content-range"), `bytes */${RECORD_SIZE}`);
+  assert.equal(res.headers.get("cache-control"), "no-store",
+    "a 416 answers one specific Range and must not be replayed");
+});
+
+// Against a WARM cache, deliberately. #3 shipped a cache and a precondition fix
+// together and the cache started answering preconditions with a cached 200;
+// every test missed it because they all reset the cache first. Same trap, same
+// shape: a cached full 200 must not intercept a request whose range R2 alone
+// can judge.
+test("a range past the end is still 416 when the object is cached", async () => {
+  resetCache();
+  await worker.fetch(new Request("https://buildinfos.pkg.haus" + RECORD), env, ctx);
+  await settle();
+  const res = await worker.fetch(
+    new Request("https://buildinfos.pkg.haus" + RECORD, {
+      headers: { range: `bytes=${RECORD_SIZE + 100}-` },
+    }), env, ctx);
+  await settle();
+  assert.equal(res.status, 416, "a warm cache must not answer a range it cannot judge");
+  assert.equal(res.headers.get("content-range"), `bytes */${RECORD_SIZE}`);
+});
+
+test("a valid range is still a 206, cold and warm", async () => {
+  for (const warm of [false, true]) {
+    resetCache();
+    if (warm) {
+      await worker.fetch(new Request("https://buildinfos.pkg.haus" + RECORD), env, ctx);
+      await settle();
+    }
+    const res = await worker.fetch(
+      new Request("https://buildinfos.pkg.haus" + RECORD, {
+        headers: { range: "bytes=0-3" },
+      }), env, ctx);
+    await settle();
+    assert.equal(res.status, 206, `valid range broke with warm=${warm}`);
+  }
+});
+
+// The guard on the 416 path, which the test below it cannot reach: a key that
+// does not exist makes R2 return null rather than throw, so that request never
+// enters the catch at all. This one does -- get throws the range error and the
+// object then vanishes before head runs, which is what a prune racing a reader
+// looks like. Without the guard it answers 416 with "bytes */undefined".
+test("an object that vanishes between get and head is 404, not a broken 416", async () => {
+  resetCache();
+  const realHead = env.ARCHIVE.head;
+  env.ARCHIVE.head = async () => null;
+  try {
+    const res = await worker.fetch(
+      new Request("https://buildinfos.pkg.haus" + RECORD, {
+        headers: { range: `bytes=${RECORD_SIZE}-` },
+      }), env, ctx);
+    await settle();
+    assert.equal(res.status, 404);
+  } finally {
+    env.ARCHIVE.head = realHead;
+  }
+});
+
+test("a bad range on an object that is not there is still 404", async () => {
+  resetCache();
+  const res = await worker.fetch(
+    new Request("https://buildinfos.pkg.haus/buildinfo-pool/n/nope/nope_1-1_amd64.buildinfo", {
+      headers: { range: "bytes=999-" },
+    }), env, ctx);
+  await settle();
+  assert.equal(res.status, 404);
 });
