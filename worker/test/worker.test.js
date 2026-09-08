@@ -1,7 +1,6 @@
-// The serving path, against a fake R2. pkghaus/apt learned this the hard way:
-// the archive Worker had no test at all until the split, and the two decisions
-// worth testing here are the same shape -- what a request maps to in the
-// bucket, and what happens when it maps to nothing.
+// The serving path, against a fake R2. The two decisions worth testing are
+// what a request maps to in the bucket, and what happens when it maps to
+// nothing.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -61,14 +60,12 @@ function fakeBucket(keys, reads = []) {
 
       // Real R2 takes an R2Range or a Headers here and throws on a string.
       // Handed the header's value instead of the headers, every ranged request
-      // is a 500 -- which is what apt.pkg.haus/buildinfos served on the day it
-      // went live, before this line existed to catch it.
+      // is a 500. This line is what catches that.
       if (typeof opts.range === "string") {
         throw new TypeError("Incorrect type for the 'range' field");
       }
 
-      // Measured against live R2 2026-09-02, all four cases below. Two traps,
-      // both of which shipped before this modelled them:
+      // Measured against live R2, all four cases below. Two traps:
       //
       // 1. A GET with no Range still comes back with `range` set to the whole
       //    object, so `object.range` does not mean "the client asked for one".
@@ -256,8 +253,8 @@ test("rendered pages escape what comes out of the bucket", () => {
   assert.match(body, /&lt;img/);
 });
 
-// The two range bugs that shipped live on 2026-09-02 and were caught by curl,
-// not by this file. Both are about trusting the response over the request.
+// Two range bugs a fake cannot show unless it models R2 exactly. Both come
+// from trusting the response over the request.
 
 test("a plain GET is a 200, however R2 reports the range it served", async () => {
   const r = await get("/buildinfo-pool/c/croc/croc_11.3.6-1.dsc");

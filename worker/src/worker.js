@@ -427,11 +427,9 @@ async function serve(request, env, path) {
     // real length, which is what lets the client discard its partial and start
     // again.
     //
-    // Found 2026-09-04 alongside the same bug in pkghaus/apt, where it was
-    // worse: there the throw was caught and rendered as 404, which failed
-    // `apt update` outright for clients in fifteen countries. Nothing here is
-    // load-bearing in that way, but a 500 is still the wrong answer to a
-    // well-formed question.
+    // Nothing here is load-bearing the way the archive's copy is -- there the
+    // same throw rendered as 404 fails `apt update` outright -- but a 500 is
+    // still the wrong answer to a well-formed question.
     if (!isUnsatisfiableRange(e)) throw e;
     const head = await env.ARCHIVE.head(key);
     if (!head) return notFound();
@@ -454,9 +452,9 @@ async function serve(request, env, path) {
 
   // A bodiless result is R2 answering the onlyIf, not a missing object.
   // Which status that is depends on which condition failed: the "has it
-  // changed" pair means the caller's copy is current, the "only if it is
-  // still this" pair means it is not. Collapsing both into 304 told a
-  // failed If-Match that nothing had changed.
+  // changed" pair means the caller's copy is current, the "only if it is still
+  // this" pair means it is not. Collapsing both into 304 tells a failed
+  // If-Match that nothing changed.
   if (!("body" in object)) {
     const fresh =
       request.headers.has("if-none-match") ||
@@ -485,17 +483,16 @@ async function serve(request, env, path) {
   return new Response(object.body, { status: 200, headers });
 }
 
-// Measured against live R2 on 2026-09-02, all four cases: the result's range is
-// always {offset, length}, both already resolved to numbers, whatever the
-// request asked for. A suffix range comes back converted to an offset; an
-// open-ended one comes back with its length filled in.
+// Measured against live R2, all four cases: the result's range is always
+// {offset, length}, both already resolved to numbers, whatever the request
+// asked for. A suffix range comes back converted to an offset; an open-ended
+// one comes back with its length filled in.
 //
 // The trap is that all three keys are own properties of that object and
 // `suffix` is always undefined, so `"suffix" in range` is true on EVERY result.
 // Branching on key presence therefore takes the suffix path every time and
-// computes `size - undefined`, which is how both this Worker and the archive's
-// served `content-range: bytes NaN-4357/4358` while slicing the bytes correctly.
-// Test the values, never the keys.
+// computes `size - undefined`, serving `content-range: bytes NaN-4357/4358`
+// while slicing the bytes correctly. Test the values, never the keys.
 export function resolveRange(range, size) {
   // Guarded on the VALUE, not the key. Unreached by live R2, one typeof, and it
   // keeps the function total if R2 ever reports a suffix it has not resolved.
