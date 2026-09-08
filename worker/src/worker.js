@@ -251,12 +251,30 @@ export function renderListing(path, dirs, files) {
     header(parts.join("/")) + rows(entries));
 }
 
-function notFound() {
+// Both no-object endings, in this host's own furniture. One helper so the two
+// cannot drift in status furniture or headers.
+function errorPage(status, title, tagline) {
   return new Response(
-    page("Not found - buildinfos.pkg.haus",
-      header("", "No such record.")
+    page(`${title} - buildinfos.pkg.haus`,
+      header("", tagline)
       + `<p style="margin:1.5rem 0 0"><a href="/">Back to the pool</a></p>`),
-    { status: 404, headers: { "content-type": "text/html; charset=utf-8" } });
+    {
+      status,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        ...SECURITY_HEADERS,
+      },
+    });
+}
+
+function notFound() {
+  return errorPage(404, "Not found", "No such record.");
+}
+
+// Malformed request, not a broken server: 400, not the 500 an unhandled
+// URIError produces.
+function badRequest() {
+  return errorPage(400, "Bad request", "That address is not a valid URL.");
 }
 
 const SECURITY_HEADERS = {
@@ -293,7 +311,16 @@ export default {
       return new Response("Method not allowed", { status: 405 });
     }
     const url = new URL(request.url);
-    const path = decodeURIComponent(url.pathname);
+
+    // decodeURIComponent throws URIError on a malformed escape (`/%`, or a
+    // truncated sequence like `/%E0%A4%A`). Unhandled that is Cloudflare's 1101
+    // page: a 500 blaming the server for the client's address.
+    let path;
+    try {
+      path = decodeURIComponent(url.pathname);
+    } catch {
+      return badRequest();
+    }
 
     if (!env.ARCHIVE) return new Response("Not configured", { status: 503 });
 

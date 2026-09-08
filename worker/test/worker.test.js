@@ -619,3 +619,36 @@ test("a bad range on an object that is not there is still 404", async () => {
   await settle();
   assert.equal(res.status, 404);
 });
+
+// An unguarded decodeURIComponent throws URIError out of fetch(), which
+// Cloudflare renders as a 500. Each path here is a shape a crawler or a
+// truncated link produces.
+test("a malformed percent-escape is 400, not a thrown 500", async () => {
+  resetCache();
+  for (const p of ["/%", "/%zz", "/buildinfo-pool/%E0%A4%A", "/buildinfo-pool/c/%/x.buildinfo"]) {
+    const res = await get(p);
+    assert.equal(res.status, 400, p);
+    assert.match(await res.text(), /not a valid URL/, p);
+  }
+});
+
+// Every HTML response on this host carries these.
+test("both error pages carry the security headers", async () => {
+  resetCache();
+  for (const p of ["/%", "/buildinfo-pool/c/croc/nope.buildinfo"]) {
+    const res = await get(p);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff", p);
+    assert.equal(res.headers.get("referrer-policy"), "no-referrer", p);
+    assert.match(res.headers.get("content-security-policy"), /default-src 'none'/, p);
+  }
+});
+
+// A client error must not reach the bucket or enter the cache, where a later
+// well-formed request could inherit it.
+test("a malformed path touches neither R2 nor the cache", async () => {
+  resetCache();
+  await get("/%");
+  await settle();
+  assert.deepEqual(reads, []);
+  assert.equal(store.size, 0);
+});
