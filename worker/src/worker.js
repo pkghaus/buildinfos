@@ -109,7 +109,7 @@ h1 .dot,h1 .sep{color:var(--accent)}
 h1 .path{font-size:.65em}
 h1 .gap{color:var(--muted)}
 h1 a{color:inherit;text-decoration:none}
-h1 a:hover{color:var(--accent)}
+h1 a:hover{text-decoration:underline;text-decoration-color:var(--accent);text-underline-offset:.18em;text-decoration-thickness:.07em}
 .tagline{flex-basis:100%;color:var(--muted);margin:.75rem 0 0;max-width:38rem}
 .tablewrap{overflow-x:auto;padding:1.5rem 0}
 .tablewrap:has(+ footer){padding-bottom:0}
@@ -187,7 +187,7 @@ const PLAUSIBLE_INIT = `
 
 function page(title, body) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="${esc(DESCRIPTION)}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>${esc(title)}</title>
