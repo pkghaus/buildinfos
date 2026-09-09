@@ -295,6 +295,10 @@ function html(bodyText, maxAge, status = 200) {
   });
 }
 
+// This function and resolveRange below are identical in pkghaus/apt
+// worker/src/worker.js. A bug in either is a bug in both: the NaN content-range
+// was. Fix them together.
+//
 // R2 signals an unsatisfiable range by throwing, with no typed error to match
 // on. Matches both the message and the code it actually emits, because either
 // alone is one upstream wording change away from silently reverting this to a
