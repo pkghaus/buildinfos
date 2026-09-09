@@ -696,11 +696,17 @@ test("the CSP hash authorises the inline block the page ships", async () => {
   resetCache();
   const res = await get("/");
   const body = await res.text();
-  const inline = body.match(/<script>([\s\S]*?)<\/script>/)[1];
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(inline));
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+  // Every inline block, not just the first: the page runs two now, and a
+  // policy naming only one silently blocks the other.
+  const inline = [...body.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  assert.equal(inline.length, 2, "expected the Plausible init and the time localiser");
   const csp = res.headers.get("content-security-policy");
-  assert.ok(csp.includes(`'sha256-${b64}'`), `CSP does not name the page's own script:\n${csp}`);
+  for (const block of inline) {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(block));
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+    assert.ok(csp.includes(`'sha256-${b64}'`),
+      `CSP does not name an inline block the page ships:\n${block.slice(0, 60)}…\n${csp}`);
+  }
   assert.ok(csp.includes("script-src 'self'"), csp);
   assert.ok(csp.includes("connect-src 'self'"), csp);
   // The hash is only worth having if the directive does not also wave
@@ -720,4 +726,26 @@ test("non-HTML responses keep the script-free CSP", async () => {
     assert.ok(csp.startsWith("default-src 'none'"), p);
     assert.equal(/script-src/.test(csp), false, `${p} should need no script-src: ${csp}`);
   }
+});
+
+// The footer timestamp apt and stats already carry. It is the only signal of
+// how stale an edge-cached listing is, and these are cached for 300s.
+test("every page's footer carries a UTC timestamp and localises it", async () => {
+  resetCache();
+  for (const p of ["/", "/buildinfo-pool/c/croc/nope.buildinfo"]) {
+    const body = await (await get(p)).text();
+    assert.match(body, /<span>listed <time datetime="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z">/, p);
+    assert.match(body, /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC<\/time>/, p);
+    assert.match(body, /toLocaleString/, p);
+  }
+});
+
+// Listing titles take the host-first breadcrumb shape apt.pkg.haus uses;
+// error pages keep the label shape, because they name a condition, not a path.
+test("titles follow the estate's two shapes", async () => {
+  resetCache();
+  const listing = await (await get("/buildinfo-pool/")).text();
+  assert.match(listing, /<title>buildinfos\.pkg\.haus\/buildinfo-pool\/<\/title>/);
+  const missing = await (await get("/buildinfo-pool/c/nope/x.buildinfo")).text();
+  assert.match(missing, /<title>Not found - buildinfos\.pkg\.haus<\/title>/);
 });
