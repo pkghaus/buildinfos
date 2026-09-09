@@ -148,11 +148,32 @@ const MARK = `<svg width="80" height="80" viewBox="0 0 64 64" role="img" aria-la
 <path d="M15.658 14.829 L23.658 10.829 L47 22.5 L47 28.5 L45.7 27.2 L44.3 29.8 L43 28.5 L41.7 31.2 L40.3 29.8 L39 32.5 L39 26.5 Z" fill="var(--accent)"/>
 <path d="M21 20 L27 26 V33 H15 V26 Z" fill="currentColor" transform="matrix(1,0.5,0,1,0,0)"/></svg>`;
 
-const FOOTER = `<footer><a href="https://pkg.haus">pkg.haus</a>
+// "listed" rather than "listed live from the archive bucket": the timestamp
+// beside it carries the meaning, the rest was provenance, and it is what put
+// this footer onto a second line once the time was added.
+function footer() {
+  const now = new Date();
+  const iso = now.toISOString().replace(/\.\d+Z$/, "Z");
+  const stamp = iso.replace("T", " ").replace("Z", " UTC");
+  return `<footer><a href="https://pkg.haus">pkg.haus</a>
 <a href="https://apt.pkg.haus">apt.pkg.haus</a>
 <a href="https://github.com/pkghaus">github.com/pkghaus</a>
-<span>listed live from the archive bucket</span>
+<span>listed <time datetime="${iso}">${stamp}</time></span>
 <span>Apache-2.0</span></footer>`;
+}
+
+// The <time> above carries UTC so an edge-cached copy stays honest; this
+// rewrites it into the reader's own zone. Byte-identical to the block
+// apt.pkg.haus and /stats run, so all three agree on the format.
+const LOCALISE = `
+  document.querySelectorAll("time[datetime]").forEach(function (t) {
+    t.textContent = new Date(t.getAttribute("datetime")).toLocaleString([], {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false, timeZoneName: "short"
+    });
+  });
+`;
 
 const PLAUSIBLE_INIT = `
   window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
@@ -168,7 +189,7 @@ function page(title, body) {
 <script defer src="/zk/js/script.js"></script>
 <script>${PLAUSIBLE_INIT}</script>
 <style>${STYLE}</style></head><body><main>
-${body}${FOOTER}</main></body></html>`;
+${body}${footer()}</main><script>${LOCALISE}</script></body></html>`;
 }
 
 function rows(entries) {
@@ -272,7 +293,7 @@ export function renderListing(path, dirs, files) {
   const entries = [{ name: "../", href: "../", size: "-" }]
     .concat(dirs.map((d) => ({ name: d, href: d, size: "-" })))
     .concat(files.map((f) => ({ name: f.name, href: f.name, size: humanSize(f.size) })));
-  return page(`${parts.join("/")} - buildinfos.pkg.haus`,
+  return page(`buildinfos.pkg.haus/${parts.join("/")}/`,
     header(parts.join("/")) + rows(entries));
 }
 
@@ -282,7 +303,8 @@ async function errorPage(status, title, tagline) {
   return new Response(
     page(`${title} - buildinfos.pkg.haus`,
       header("", tagline)
-      + `<p style="margin:1.5rem 0 0"><a href="/">Back to the pool</a></p>`),
+      + `<p style="margin:1.5rem 0 0">Start from the <a href="/">pool listing</a>, `
+      + `or the <a href="https://apt.pkg.haus">archive</a>.</p>`),
     {
       status,
       headers: {
@@ -320,13 +342,15 @@ const SECURITY_HEADERS = {
 let htmlHeaders = null;
 async function htmlSecurityHeaders() {
   if (!htmlHeaders) {
-    const digest = await crypto.subtle.digest(
-      "SHA-256", new TextEncoder().encode(PLAUSIBLE_INIT));
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+    const hashes = await Promise.all([PLAUSIBLE_INIT, LOCALISE].map(async (body) => {
+      const digest = await crypto.subtle.digest(
+        "SHA-256", new TextEncoder().encode(body));
+      return `'sha256-${btoa(String.fromCharCode(...new Uint8Array(digest)))}'`;
+    }));
     htmlHeaders = {
       ...SECURITY_HEADERS,
       "content-security-policy":
-        `default-src 'none'; script-src 'self' 'sha256-${b64}'; ` +
+        `default-src 'none'; script-src 'self' ${hashes.join(" ")}; ` +
         `connect-src 'self'; ${CSP_TAIL}`,
     };
   }
