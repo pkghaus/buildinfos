@@ -110,6 +110,7 @@ h1 a{color:inherit;text-decoration:none}
 h1 a:hover{color:var(--accent)}
 .tagline{flex-basis:100%;color:var(--muted);margin:.75rem 0 0;max-width:38rem}
 .tablewrap{overflow-x:auto;padding:1.5rem 0}
+.tablewrap:has(+ footer){padding-bottom:0}
 table{border-collapse:collapse;width:100%;font-size:.92rem}
 th,td{text-align:left;padding:.5rem .75rem .5rem 0;
 border-bottom:1px dashed var(--line);vertical-align:top}
@@ -122,7 +123,7 @@ th.size{text-align:right}
 code{font-family:var(--mono)}
 a{color:var(--accent-text);text-decoration:none}
 a:hover{text-decoration:underline}
-footer{border-top:3px solid var(--ink);margin-top:3rem;
+footer{border-top:3px solid var(--ink);margin-top:2rem;
 padding-top:1.5rem;display:flex;gap:1.5rem;
 flex-wrap:wrap;font-size:.85rem;color:var(--muted)}
 footer a{color:inherit}
@@ -134,6 +135,7 @@ footer a:hover{color:var(--accent-text)}
 .about h2{font-size:1.05rem;margin:1.75rem 0 .5rem}
 .about h2:first-child{margin-top:0}
 .about p{margin:0 0 .9rem;max-width:38rem}
+.about>:last-child{margin-bottom:0}
 .about code{font-size:.9em}
 pre{background:rgba(128,128,128,.1);padding:.7rem .85rem;overflow-x:auto;
 font-family:var(--mono);font-size:.78rem;line-height:1.5;margin:0 0 .9rem}
