@@ -649,3 +649,29 @@ test("a malformed path touches neither R2 nor the cache", async () => {
   assert.deepEqual(reads, []);
   assert.equal(store.size, 0);
 });
+
+// The tab icon. Served here rather than from the bucket: it is page furniture,
+// not a record, and it is the one asset that cannot use currentColor because a
+// tab has no page to inherit from.
+test("the favicon is served without reaching the bucket", async () => {
+  resetCache();
+  const res = await get("/favicon.svg");
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "image/svg+xml");
+  assert.match(res.headers.get("cache-control"), /immutable/);
+  assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  assert.match(await res.text(), /^<svg /);
+  await settle();
+  assert.deepEqual(reads, []);
+});
+
+// Both are in the one page template, so the 404 carries them as well as the
+// listings -- which is where a missing description is least affordable.
+test("every page carries the favicon link and a description", async () => {
+  resetCache();
+  for (const p of ["/", "/buildinfo-pool/c/croc/nope.buildinfo"]) {
+    const body = await (await get(p)).text();
+    assert.match(body, /<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg">/, p);
+    assert.match(body, /<meta name="description" content="Build records for/, p);
+  }
+});

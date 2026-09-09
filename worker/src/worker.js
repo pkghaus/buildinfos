@@ -21,6 +21,20 @@ const LIST_FILE = "buildinfo-pool.list";
 // rebuilt, so neither is its .buildinfo or its source package. The listing
 // pages are derived from what exists and are revalidated instead.
 const IMMUTABLE_MAX_AGE = 2592000;
+
+const DESCRIPTION =
+  "Build records for the pkg.haus archive: what each package was built from, and with.";
+
+const FAVICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="16" height="16">
+  <path d="M32 6 L56 18 V46 L32 58 L8 46 V18 Z" fill="#FFFFFF"/>
+  <g stroke="#101010" stroke-width="7" stroke-linejoin="round" stroke-linecap="round" fill="none">
+    <path d="M8 18 L32 30 L56 18"/>
+    <path d="M32 30 V58"/>
+    <path d="M32 6 L56 18 V46 L32 58 L8 46 V18 Z"/>
+  </g>
+  <path d="M11.087 12.543 L21.087 7.543 L49 21.5 L49 28.5 L39 33.5 L39 26.5 Z" fill="#E0421B"/>
+</svg>
+`;
 const LISTING_MAX_AGE = 300;
 
 export function contentType(key) {
@@ -108,7 +122,8 @@ th.size{text-align:right}
 code{font-family:var(--mono)}
 a{color:var(--accent-text);text-decoration:none}
 a:hover{text-decoration:underline}
-footer{border-top:3px solid var(--ink);padding-top:1.5rem;display:flex;gap:1.5rem;
+footer{border-top:3px solid var(--ink);margin-top:3rem;
+padding-top:1.5rem;display:flex;gap:1.5rem;
 flex-wrap:wrap;font-size:.85rem;color:var(--muted)}
 footer a{color:inherit}
 footer a:hover{color:var(--accent-text)}
@@ -142,6 +157,8 @@ const FOOTER = `<footer><a href="https://pkg.haus">pkg.haus</a>
 function page(title, body) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="${esc(DESCRIPTION)}">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>${esc(title)}</title><style>${STYLE}</style></head><body><main>
 ${body}${FOOTER}</main></body></html>`;
 }
@@ -171,9 +188,9 @@ convention the Debian package pool uses, and the same name
 <a href="https://buildinfos.debian.net">buildinfos.debian.net</a> gives its pool view.
 Each version appears once per suite, because each suite gets its own build against its
 own libraries, and the version qualifier says which:</p>
-<pre><span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-1~haus13+1_amd64.buildinfo
-<span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-1~testing1_amd64.buildinfo
-<span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-1_amd64.buildinfo</pre>
+<pre><span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-2~haus13+1_amd64.buildinfo
+<span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-2~testing1_amd64.buildinfo
+<span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-2_amd64.buildinfo</pre>
 <p>Beside each record sit the <code>.dsc</code> and the source tarballs it was built
 from, and a <code>.source</code> naming the upstream repository, tag and commit.</p>
 <h2>What you can do with one</h2>
@@ -375,6 +392,15 @@ export default {
 };
 
 async function serve(request, env, path) {
+  if (path === "/favicon.svg") {
+    return new Response(FAVICON, {
+      headers: {
+        "content-type": "image/svg+xml",
+        "cache-control": `public, max-age=${IMMUTABLE_MAX_AGE}, immutable`,
+        ...SECURITY_HEADERS,
+      },
+    });
+  }
 
   // The flat index. Generated per request from a LIST rather than stored,
   // so it cannot drift from the pool it describes.
