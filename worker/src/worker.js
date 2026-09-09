@@ -89,11 +89,11 @@ const STYLE = `
    headings, which are large text needing 3:1, and short of the 4.5:1 small
    text needs. Small text gets a darker step; everything seen at size keeps the
    brand value. Dark mode passes at 5.92:1, so there the two are the same. */
---accent-text:#CC3B18;
+--accent-text:#CC3B18;--code-bg:#F7F6F3;
 --mono:ui-monospace,Menlo,Consolas,monospace}
 @media(prefers-color-scheme:dark){:root{
 --paper:#0E0E0E;--ink:#F0F0EC;--muted:#8F8F88;
---line:#2A2A27;--accent:#F0603C;--accent-text:#F0603C}}
+--line:#2A2A27;--accent:#F0603C;--accent-text:#F0603C;--code-bg:#131311}}
 *{box-sizing:border-box}
 body{background:var(--paper);color:var(--ink);
 font-family:system-ui,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
@@ -101,6 +101,8 @@ line-height:1.55;margin:0;padding:0 1.25rem 4rem}
 main{max-width:46rem;margin:0 auto}
 header{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;
 padding:2.25rem 0 1.25rem;border-bottom:3px solid var(--ink)}
+/* Same clear space under the header's rule as above the footer's. */
+header+*{margin-top:0;padding-top:2rem}
 h1{font-family:var(--mono);font-size:clamp(1.9rem,6vw,2.6rem);letter-spacing:-.03em;
 margin:0;line-height:1.15;min-width:0}
 h1 .dot,h1 .sep{color:var(--accent)}
@@ -131,14 +133,15 @@ footer a:hover{color:var(--accent-text)}
 
 /* Only what the archive has no counterpart for: this host explains itself on
    its root page, which no listing page does. */
-.about{border-top:3px solid var(--ink);margin-top:2.5rem;padding-top:1.25rem}
+.about{border-top:1px solid var(--line);margin-top:2rem;padding-top:2rem}
 .about h2{font-size:1.05rem;margin:1.75rem 0 .5rem}
 .about h2:first-child{margin-top:0}
 .about p{margin:0 0 .9rem;max-width:38rem}
 .about>:last-child{margin-bottom:0}
 .about code{font-size:.9em}
-pre{background:rgba(128,128,128,.1);padding:.7rem .85rem;overflow-x:auto;
-font-family:var(--mono);font-size:.78rem;line-height:1.5;margin:0 0 .9rem}
+pre{background:var(--code-bg);border:1px solid var(--line);
+border-left:3px solid var(--accent);padding:1rem 1.1rem;overflow-x:auto;
+font-family:var(--mono);font-size:.82rem;line-height:1.6;margin:.75rem 0}
 pre .c{color:var(--muted)}
 `;
 
