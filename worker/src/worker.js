@@ -154,12 +154,20 @@ const FOOTER = `<footer><a href="https://pkg.haus">pkg.haus</a>
 <span>listed live from the archive bucket</span>
 <span>Apache-2.0</span></footer>`;
 
+const PLAUSIBLE_INIT = `
+  window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+  plausible.init({ endpoint: "/zk/api/event" })
+`;
+
 function page(title, body) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="${esc(DESCRIPTION)}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<title>${esc(title)}</title><style>${STYLE}</style></head><body><main>
+<title>${esc(title)}</title>
+<script defer src="/zk/js/script.js"></script>
+<script>${PLAUSIBLE_INIT}</script>
+<style>${STYLE}</style></head><body><main>
 ${body}${FOOTER}</main></body></html>`;
 }
 
@@ -270,7 +278,7 @@ export function renderListing(path, dirs, files) {
 
 // Both no-object endings, in this host's own furniture. One helper so the two
 // cannot drift in status furniture or headers.
-function errorPage(status, title, tagline) {
+async function errorPage(status, title, tagline) {
   return new Response(
     page(`${title} - buildinfos.pkg.haus`,
       header("", tagline)
@@ -279,7 +287,7 @@ function errorPage(status, title, tagline) {
       status,
       headers: {
         "content-type": "text/html; charset=utf-8",
-        ...SECURITY_HEADERS,
+        ...(await htmlSecurityHeaders()),
       },
     });
 }
@@ -294,20 +302,44 @@ function badRequest() {
   return errorPage(400, "Bad request", "That address is not a valid URL.");
 }
 
+const CSP_TAIL =
+  "style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
-  "content-security-policy":
-    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  "content-security-policy": `default-src 'none'; ${CSP_TAIL}`,
 };
 
-function html(bodyText, maxAge, status = 200) {
+// The HTML pages carry the Plausible loader and one inline block, so they need
+// a script-src the records do not. It names that block by hash rather than
+// allowing every inline script, which is what keeps the CSP a real second wall
+// behind esc(): an injected <script> has no matching hash. The digest is taken
+// from the same constant page() emits, so the two cannot drift, and it is
+// cached per isolate because the input is static.
+let htmlHeaders = null;
+async function htmlSecurityHeaders() {
+  if (!htmlHeaders) {
+    const digest = await crypto.subtle.digest(
+      "SHA-256", new TextEncoder().encode(PLAUSIBLE_INIT));
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+    htmlHeaders = {
+      ...SECURITY_HEADERS,
+      "content-security-policy":
+        `default-src 'none'; script-src 'self' 'sha256-${b64}'; ` +
+        `connect-src 'self'; ${CSP_TAIL}`,
+    };
+  }
+  return htmlHeaders;
+}
+
+async function html(bodyText, maxAge, status = 200) {
   return new Response(bodyText, {
     status,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": `public, max-age=${maxAge}`,
-      ...SECURITY_HEADERS,
+      ...(await htmlSecurityHeaders()),
     },
   });
 }

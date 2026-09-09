@@ -675,3 +675,49 @@ test("every page carries the favicon link and a description", async () => {
     assert.match(body, /<meta name="description" content="Build records for/, p);
   }
 });
+
+// Analytics rides the same /zk/ proxy pkg.haus and apt use, so the page never
+// names plausible.io: no third-party origin in the CSP, and the loader is not
+// a blocklist target. The endpoint is explicit because the default is
+// plausible.io itself.
+test("the pages load the proxied Plausible loader, not plausible.io", async () => {
+  resetCache();
+  const body = await (await get("/")).text();
+  assert.match(body, /<script defer src="\/zk\/js\/script\.js"><\/script>/);
+  assert.match(body, /plausible\.init\(\{ endpoint: "\/zk\/api\/event" \}\)/);
+  assert.equal(/plausible\.io/.test(body), false, "the page must not name plausible.io");
+});
+
+// The assertion that keeps the CSP honest: hash what the page actually ships
+// and require the policy to name it. A drifting constant fails here rather
+// than in a browser console, where the symptom is analytics quietly not
+// running.
+test("the CSP hash authorises the inline block the page ships", async () => {
+  resetCache();
+  const res = await get("/");
+  const body = await res.text();
+  const inline = body.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(inline));
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+  const csp = res.headers.get("content-security-policy");
+  assert.ok(csp.includes(`'sha256-${b64}'`), `CSP does not name the page's own script:\n${csp}`);
+  assert.ok(csp.includes("script-src 'self'"), csp);
+  assert.ok(csp.includes("connect-src 'self'"), csp);
+  // The hash is only worth having if the directive does not also wave
+  // everything through. Read the directive itself, not the whole policy:
+  // style-src legitimately carries unsafe-inline.
+  const scriptSrc = csp.split(";").map((d) => d.trim())
+    .find((d) => d.startsWith("script-src"));
+  assert.equal(/unsafe-inline/.test(scriptSrc), false, scriptSrc);
+});
+
+// Only the HTML pages pay for the loader. A record, the flat index and the
+// favicon run nothing, and keep the policy that allows nothing.
+test("non-HTML responses keep the script-free CSP", async () => {
+  resetCache();
+  for (const p of ["/favicon.svg", "/buildinfo-pool.list"]) {
+    const csp = (await get(p)).headers.get("content-security-policy");
+    assert.ok(csp.startsWith("default-src 'none'"), p);
+    assert.equal(/script-src/.test(csp), false, `${p} should need no script-src: ${csp}`);
+  }
+});
