@@ -1,7 +1,6 @@
-// The serving path, against a fake R2. pkghaus/apt learned this the hard way:
-// the archive Worker had no test at all until the split, and the two decisions
-// worth testing here are the same shape -- what a request maps to in the
-// bucket, and what happens when it maps to nothing.
+// The serving path, against a fake R2. The two decisions worth testing are
+// what a request maps to in the bucket, and what happens when it maps to
+// nothing.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -61,14 +60,12 @@ function fakeBucket(keys, reads = []) {
 
       // Real R2 takes an R2Range or a Headers here and throws on a string.
       // Handed the header's value instead of the headers, every ranged request
-      // is a 500 -- which is what apt.pkg.haus/buildinfos served on the day it
-      // went live, before this line existed to catch it.
+      // is a 500. This line is what catches that.
       if (typeof opts.range === "string") {
         throw new TypeError("Incorrect type for the 'range' field");
       }
 
-      // Measured against live R2 2026-09-02, all four cases below. Two traps,
-      // both of which shipped before this modelled them:
+      // Measured against live R2, all four cases below. Two traps:
       //
       // 1. A GET with no Range still comes back with `range` set to the whole
       //    object, so `object.range` does not mean "the client asked for one".
@@ -256,8 +253,8 @@ test("rendered pages escape what comes out of the bucket", () => {
   assert.match(body, /&lt;img/);
 });
 
-// The two range bugs that shipped live on 2026-09-02 and were caught by curl,
-// not by this file. Both are about trusting the response over the request.
+// Two range bugs a fake cannot show unless it models R2 exactly. Both come
+// from trusting the response over the request.
 
 test("a plain GET is a 200, however R2 reports the range it served", async () => {
   const r = await get("/buildinfo-pool/c/croc/croc_11.3.6-1.dsc");
@@ -618,4 +615,109 @@ test("a bad range on an object that is not there is still 404", async () => {
     }), env, ctx);
   await settle();
   assert.equal(res.status, 404);
+});
+
+// An unguarded decodeURIComponent throws URIError out of fetch(), which
+// Cloudflare renders as a 500. Each path here is a shape a crawler or a
+// truncated link produces.
+test("a malformed percent-escape is 400, not a thrown 500", async () => {
+  resetCache();
+  for (const p of ["/%", "/%zz", "/buildinfo-pool/%E0%A4%A", "/buildinfo-pool/c/%/x.buildinfo"]) {
+    const res = await get(p);
+    assert.equal(res.status, 400, p);
+    assert.match(await res.text(), /not a valid URL/, p);
+  }
+});
+
+// Every HTML response on this host carries these.
+test("both error pages carry the security headers", async () => {
+  resetCache();
+  for (const p of ["/%", "/buildinfo-pool/c/croc/nope.buildinfo"]) {
+    const res = await get(p);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff", p);
+    assert.equal(res.headers.get("referrer-policy"), "no-referrer", p);
+    assert.match(res.headers.get("content-security-policy"), /default-src 'none'/, p);
+  }
+});
+
+// A client error must not reach the bucket or enter the cache, where a later
+// well-formed request could inherit it.
+test("a malformed path touches neither R2 nor the cache", async () => {
+  resetCache();
+  await get("/%");
+  await settle();
+  assert.deepEqual(reads, []);
+  assert.equal(store.size, 0);
+});
+
+// The tab icon. Served here rather than from the bucket: it is page furniture,
+// not a record, and it is the one asset that cannot use currentColor because a
+// tab has no page to inherit from.
+test("the favicon is served without reaching the bucket", async () => {
+  resetCache();
+  const res = await get("/favicon.svg");
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "image/svg+xml");
+  assert.match(res.headers.get("cache-control"), /immutable/);
+  assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  assert.match(await res.text(), /^<svg /);
+  await settle();
+  assert.deepEqual(reads, []);
+});
+
+// Both are in the one page template, so the 404 carries them as well as the
+// listings -- which is where a missing description is least affordable.
+test("every page carries the favicon link and a description", async () => {
+  resetCache();
+  for (const p of ["/", "/buildinfo-pool/c/croc/nope.buildinfo"]) {
+    const body = await (await get(p)).text();
+    assert.match(body, /<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg">/, p);
+    assert.match(body, /<meta name="description" content="Build records for/, p);
+  }
+});
+
+// Analytics rides the same /zk/ proxy pkg.haus and apt use, so the page never
+// names plausible.io: no third-party origin in the CSP, and the loader is not
+// a blocklist target. The endpoint is explicit because the default is
+// plausible.io itself.
+test("the pages load the proxied Plausible loader, not plausible.io", async () => {
+  resetCache();
+  const body = await (await get("/")).text();
+  assert.match(body, /<script defer src="\/zk\/js\/script\.js"><\/script>/);
+  assert.match(body, /plausible\.init\(\{ endpoint: "\/zk\/api\/event" \}\)/);
+  assert.equal(/plausible\.io/.test(body), false, "the page must not name plausible.io");
+});
+
+// The assertion that keeps the CSP honest: hash what the page actually ships
+// and require the policy to name it. A drifting constant fails here rather
+// than in a browser console, where the symptom is analytics quietly not
+// running.
+test("the CSP hash authorises the inline block the page ships", async () => {
+  resetCache();
+  const res = await get("/");
+  const body = await res.text();
+  const inline = body.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(inline));
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+  const csp = res.headers.get("content-security-policy");
+  assert.ok(csp.includes(`'sha256-${b64}'`), `CSP does not name the page's own script:\n${csp}`);
+  assert.ok(csp.includes("script-src 'self'"), csp);
+  assert.ok(csp.includes("connect-src 'self'"), csp);
+  // The hash is only worth having if the directive does not also wave
+  // everything through. Read the directive itself, not the whole policy:
+  // style-src legitimately carries unsafe-inline.
+  const scriptSrc = csp.split(";").map((d) => d.trim())
+    .find((d) => d.startsWith("script-src"));
+  assert.equal(/unsafe-inline/.test(scriptSrc), false, scriptSrc);
+});
+
+// Only the HTML pages pay for the loader. A record, the flat index and the
+// favicon run nothing, and keep the policy that allows nothing.
+test("non-HTML responses keep the script-free CSP", async () => {
+  resetCache();
+  for (const p of ["/favicon.svg", "/buildinfo-pool.list"]) {
+    const csp = (await get(p)).headers.get("content-security-policy");
+    assert.ok(csp.startsWith("default-src 'none'"), p);
+    assert.equal(/script-src/.test(csp), false, `${p} should need no script-src: ${csp}`);
+  }
 });

@@ -5,10 +5,18 @@ compatibility_date = "2026-08-01"
 # The whole host. Nothing else claims a pattern here, unlike apt.pkg.haus where
 # two narrower scripts win on specificity.
 #
-# Set both routes to "Fail open" in the dashboard (Workers & Pages ->
-# pkghaus-buildinfos -> Settings). A bypassed request reaches no origin, so it
-# 404s rather than 500s, and what actually keeps this up is that provenance
-# traffic is a rounding error against the Workers Free daily limit.
+# Leave the failure mode at Cloudflare's default, fail CLOSED. There is nothing
+# to fall open TO: every pkg.haus host is AAAA 100::, the discard prefix, so a
+# bypassed request hangs for thirty seconds and ends in 504, where fail closed
+# errors immediately and a client can retry.
+#
+# No wrangler field for it. The flag is on the route object, set with
+# PUT /zones/<id>/workers/routes/<route-id>, which carries the WHOLE object --
+# send pattern and script too or the route is reassigned.
+#
+# What keeps this host under the Workers Free limit of 100k requests/day is
+# volume: the zone last measured around 5,000/day. Re-measure before relying
+# on that.
 routes = [
   { pattern = "buildinfos.pkg.haus/*", zone_name = "pkg.haus" },
 ]

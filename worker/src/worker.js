@@ -21,6 +21,20 @@ const LIST_FILE = "buildinfo-pool.list";
 // rebuilt, so neither is its .buildinfo or its source package. The listing
 // pages are derived from what exists and are revalidated instead.
 const IMMUTABLE_MAX_AGE = 2592000;
+
+const DESCRIPTION =
+  "Build records for the pkg.haus archive: what each package was built from, and with.";
+
+const FAVICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="16" height="16">
+  <path d="M32 6 L56 18 V46 L32 58 L8 46 V18 Z" fill="#FFFFFF"/>
+  <g stroke="#101010" stroke-width="7" stroke-linejoin="round" stroke-linecap="round" fill="none">
+    <path d="M8 18 L32 30 L56 18"/>
+    <path d="M32 30 V58"/>
+    <path d="M32 6 L56 18 V46 L32 58 L8 46 V18 Z"/>
+  </g>
+  <path d="M11.087 12.543 L21.087 7.543 L49 21.5 L49 28.5 L39 33.5 L39 26.5 Z" fill="#E0421B"/>
+</svg>
+`;
 const LISTING_MAX_AGE = 300;
 
 export function contentType(key) {
@@ -108,7 +122,8 @@ th.size{text-align:right}
 code{font-family:var(--mono)}
 a{color:var(--accent-text);text-decoration:none}
 a:hover{text-decoration:underline}
-footer{border-top:3px solid var(--ink);padding-top:1.5rem;display:flex;gap:1.5rem;
+footer{border-top:3px solid var(--ink);margin-top:3rem;
+padding-top:1.5rem;display:flex;gap:1.5rem;
 flex-wrap:wrap;font-size:.85rem;color:var(--muted)}
 footer a{color:inherit}
 footer a:hover{color:var(--accent-text)}
@@ -139,10 +154,20 @@ const FOOTER = `<footer><a href="https://pkg.haus">pkg.haus</a>
 <span>listed live from the archive bucket</span>
 <span>Apache-2.0</span></footer>`;
 
+const PLAUSIBLE_INIT = `
+  window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+  plausible.init({ endpoint: "/zk/api/event" })
+`;
+
 function page(title, body) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)}</title><style>${STYLE}</style></head><body><main>
+<meta name="description" content="${esc(DESCRIPTION)}">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>${esc(title)}</title>
+<script defer src="/zk/js/script.js"></script>
+<script>${PLAUSIBLE_INIT}</script>
+<style>${STYLE}</style></head><body><main>
 ${body}${FOOTER}</main></body></html>`;
 }
 
@@ -171,9 +196,9 @@ convention the Debian package pool uses, and the same name
 <a href="https://buildinfos.debian.net">buildinfos.debian.net</a> gives its pool view.
 Each version appears once per suite, because each suite gets its own build against its
 own libraries, and the version qualifier says which:</p>
-<pre><span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-1~haus13+1_amd64.buildinfo
-<span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-1~testing1_amd64.buildinfo
-<span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-1_amd64.buildinfo</pre>
+<pre><span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-2~haus13+1_amd64.buildinfo
+<span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-2~testing1_amd64.buildinfo
+<span class="c">buildinfo-pool/c/croc/</span>croc_11.3.6-2_amd64.buildinfo</pre>
 <p>Beside each record sit the <code>.dsc</code> and the source tarballs it was built
 from, and a <code>.source</code> naming the upstream repository, tag and commit.</p>
 <h2>What you can do with one</h2>
@@ -251,32 +276,78 @@ export function renderListing(path, dirs, files) {
     header(parts.join("/")) + rows(entries));
 }
 
-function notFound() {
+// Both no-object endings, in this host's own furniture. One helper so the two
+// cannot drift in status furniture or headers.
+async function errorPage(status, title, tagline) {
   return new Response(
-    page("Not found - buildinfos.pkg.haus",
-      header("", "No such record.")
+    page(`${title} - buildinfos.pkg.haus`,
+      header("", tagline)
       + `<p style="margin:1.5rem 0 0"><a href="/">Back to the pool</a></p>`),
-    { status: 404, headers: { "content-type": "text/html; charset=utf-8" } });
+    {
+      status,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        ...(await htmlSecurityHeaders()),
+      },
+    });
 }
+
+function notFound() {
+  return errorPage(404, "Not found", "No such record.");
+}
+
+// Malformed request, not a broken server: 400, not the 500 an unhandled
+// URIError produces.
+function badRequest() {
+  return errorPage(400, "Bad request", "That address is not a valid URL.");
+}
+
+const CSP_TAIL =
+  "style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
-  "content-security-policy":
-    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  "content-security-policy": `default-src 'none'; ${CSP_TAIL}`,
 };
 
-function html(bodyText, maxAge, status = 200) {
+// The HTML pages carry the Plausible loader and one inline block, so they need
+// a script-src the records do not. It names that block by hash rather than
+// allowing every inline script, which is what keeps the CSP a real second wall
+// behind esc(): an injected <script> has no matching hash. The digest is taken
+// from the same constant page() emits, so the two cannot drift, and it is
+// cached per isolate because the input is static.
+let htmlHeaders = null;
+async function htmlSecurityHeaders() {
+  if (!htmlHeaders) {
+    const digest = await crypto.subtle.digest(
+      "SHA-256", new TextEncoder().encode(PLAUSIBLE_INIT));
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+    htmlHeaders = {
+      ...SECURITY_HEADERS,
+      "content-security-policy":
+        `default-src 'none'; script-src 'self' 'sha256-${b64}'; ` +
+        `connect-src 'self'; ${CSP_TAIL}`,
+    };
+  }
+  return htmlHeaders;
+}
+
+async function html(bodyText, maxAge, status = 200) {
   return new Response(bodyText, {
     status,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": `public, max-age=${maxAge}`,
-      ...SECURITY_HEADERS,
+      ...(await htmlSecurityHeaders()),
     },
   });
 }
 
+// This function and resolveRange below are identical in pkghaus/apt
+// worker/src/worker.js. A bug in either is a bug in both: the NaN content-range
+// was. Fix them together.
+//
 // R2 signals an unsatisfiable range by throwing, with no typed error to match
 // on. Matches both the message and the code it actually emits, because either
 // alone is one upstream wording change away from silently reverting this to a
@@ -293,7 +364,16 @@ export default {
       return new Response("Method not allowed", { status: 405 });
     }
     const url = new URL(request.url);
-    const path = decodeURIComponent(url.pathname);
+
+    // decodeURIComponent throws URIError on a malformed escape (`/%`, or a
+    // truncated sequence like `/%E0%A4%A`). Unhandled that is Cloudflare's 1101
+    // page: a 500 blaming the server for the client's address.
+    let path;
+    try {
+      path = decodeURIComponent(url.pathname);
+    } catch {
+      return badRequest();
+    }
 
     if (!env.ARCHIVE) return new Response("Not configured", { status: 503 });
 
@@ -344,6 +424,15 @@ export default {
 };
 
 async function serve(request, env, path) {
+  if (path === "/favicon.svg") {
+    return new Response(FAVICON, {
+      headers: {
+        "content-type": "image/svg+xml",
+        "cache-control": `public, max-age=${IMMUTABLE_MAX_AGE}, immutable`,
+        ...SECURITY_HEADERS,
+      },
+    });
+  }
 
   // The flat index. Generated per request from a LIST rather than stored,
   // so it cannot drift from the pool it describes.
@@ -400,11 +489,9 @@ async function serve(request, env, path) {
     // real length, which is what lets the client discard its partial and start
     // again.
     //
-    // Found 2026-09-04 alongside the same bug in pkghaus/apt, where it was
-    // worse: there the throw was caught and rendered as 404, which failed
-    // `apt update` outright for clients in fifteen countries. Nothing here is
-    // load-bearing in that way, but a 500 is still the wrong answer to a
-    // well-formed question.
+    // Nothing here is load-bearing the way the archive's copy is -- there the
+    // same throw rendered as 404 fails `apt update` outright -- but a 500 is
+    // still the wrong answer to a well-formed question.
     if (!isUnsatisfiableRange(e)) throw e;
     const head = await env.ARCHIVE.head(key);
     if (!head) return notFound();
@@ -427,9 +514,9 @@ async function serve(request, env, path) {
 
   // A bodiless result is R2 answering the onlyIf, not a missing object.
   // Which status that is depends on which condition failed: the "has it
-  // changed" pair means the caller's copy is current, the "only if it is
-  // still this" pair means it is not. Collapsing both into 304 told a
-  // failed If-Match that nothing had changed.
+  // changed" pair means the caller's copy is current, the "only if it is still
+  // this" pair means it is not. Collapsing both into 304 tells a failed
+  // If-Match that nothing changed.
   if (!("body" in object)) {
     const fresh =
       request.headers.has("if-none-match") ||
@@ -458,17 +545,16 @@ async function serve(request, env, path) {
   return new Response(object.body, { status: 200, headers });
 }
 
-// Measured against live R2 on 2026-09-02, all four cases: the result's range is
-// always {offset, length}, both already resolved to numbers, whatever the
-// request asked for. A suffix range comes back converted to an offset; an
-// open-ended one comes back with its length filled in.
+// Measured against live R2, all four cases: the result's range is always
+// {offset, length}, both already resolved to numbers, whatever the request
+// asked for. A suffix range comes back converted to an offset; an open-ended
+// one comes back with its length filled in.
 //
 // The trap is that all three keys are own properties of that object and
 // `suffix` is always undefined, so `"suffix" in range` is true on EVERY result.
 // Branching on key presence therefore takes the suffix path every time and
-// computes `size - undefined`, which is how both this Worker and the archive's
-// served `content-range: bytes NaN-4357/4358` while slicing the bytes correctly.
-// Test the values, never the keys.
+// computes `size - undefined`, serving `content-range: bytes NaN-4357/4358`
+// while slicing the bytes correctly. Test the values, never the keys.
 export function resolveRange(range, size) {
   // Guarded on the VALUE, not the key. Unreached by live R2, one typeof, and it
   // keeps the function total if R2 ever reports a suffix it has not resolved.

@@ -12,10 +12,10 @@ updates:
       prefix: "ci"
 
   # wrangler is pinned exactly and runs with a token that can deploy a worker
-  # on the archive's host. Pinning is what stops it changing on its own; this
-  # is what stops it going stale. The directory is /worker, not /: package.json
-  # lives beside the worker, and a config pointing at the root finds nothing
-  # and reports nothing, which is how apt went without npm coverage until now.
+  # on the archive's host. Pinning stops it changing on its own; this stops it
+  # going stale. The directory is /worker, not /: package.json lives beside the
+  # worker, and a config pointing at the root finds nothing and reports
+  # nothing, so the gap reads exactly like coverage.
   - package-ecosystem: npm
     directory: /worker
     schedule:
