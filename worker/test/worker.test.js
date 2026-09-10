@@ -749,3 +749,32 @@ test("titles follow the estate's two shapes", async () => {
   const missing = await (await get("/buildinfo-pool/c/nope/x.buildinfo")).text();
   assert.match(missing, /<title>Not found - buildinfos\.pkg\.haus<\/title>/);
 });
+
+// R2 failing is not the client's fault, and it is not a missing record either.
+// Unhandled, a throw from get(), head() or the list() loop became Cloudflare's
+// 1101 page: a 500. pkghaus-archive answers 503 in the same situation because
+// a 500 is not retryable and a 404 would claim the record does not exist.
+test("an R2 read that throws is a 503, not a 500 or a 404", async () => {
+  resetCache();
+  const broken = {
+    async get() { throw new Error("R2 is having a moment"); },
+    async head() { throw new Error("R2 is having a moment"); },
+    async list() { throw new Error("R2 is having a moment"); },
+  };
+  const r = await worker.fetch(
+    new Request("https://buildinfos.pkg.haus/buildinfo-pool/c/croc/croc_1.0-1_amd64.buildinfo"),
+    { ARCHIVE: broken }, ctx);
+  assert.equal(r.status, 503);
+});
+
+test("an R2 list that throws on a listing page is a 503 too", async () => {
+  resetCache();
+  const broken = {
+    async get() { throw new Error("R2 is having a moment"); },
+    async head() { throw new Error("R2 is having a moment"); },
+    async list() { throw new Error("R2 is having a moment"); },
+  };
+  const r = await worker.fetch(
+    new Request("https://buildinfos.pkg.haus/buildinfo-pool/"), { ARCHIVE: broken }, ctx);
+  assert.equal(r.status, 503);
+});
