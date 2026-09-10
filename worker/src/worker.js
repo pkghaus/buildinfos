@@ -441,7 +441,25 @@ export default {
       if (hit) return hit;
     }
 
-    const response = await serve(request, env, path);
+    let response;
+    try {
+      response = await serve(request, env, path);
+    } catch (e) {
+      // Everything below serve() talks to R2: get(), head(), and the list()
+      // loop behind every listing page. A throw there is unhandled today and
+      // becomes Cloudflare's 1101 page, a 500 blaming the server for the
+      // client's request -- the same shape the malformed-escape guard above
+      // exists to avoid. 503 is what pkghaus-archive answers in this
+      // situation, and the reasoning carries over: a 500 is not retryable and
+      // a 404 would be a lie about whether the record exists. Logged rather
+      // than swallowed, because a silent 503 and a broken binding look
+      // identical from outside.
+      console.error("serve failed:", e?.message ?? e);
+      return new Response("Service unavailable", {
+        status: 503,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
 
     // Only a complete, successful body. A 206 is a fragment, a 304 is not the
     // object, and a 404 page must not outlive the publish that fills the gap.
