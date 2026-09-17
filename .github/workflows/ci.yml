@@ -60,4 +60,4 @@ jobs:
       # PyYAML's safe_load accepts duplicate mapping keys and GitHub does not,
       # so "it parses locally" proves nothing without this.
       - name: Reject duplicate YAML keys
-        run: python3 tests/yamlcheck.py .github/workflows/*.yml
+        run: python3 tests/yamlcheck.py .github/dependabot.yml .github/workflows/*.yml

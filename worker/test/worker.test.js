@@ -75,13 +75,16 @@ function fakeBucket(keys, reads = []) {
       //    every single result.
       let [offset, length] = [0, size];
       let slice = body;
-      const header = opts.range instanceof Headers ? opts.range.get("range") : null;
-      const m = header ? /^bytes=(\d*)-(\d*)$/.exec(header) : null;
+      const m = rangeHeader ? /^bytes=(\d*)-(\d*)$/.exec(rangeHeader) : null;
       if (m) {
-        if (m[1] === "") offset = size - Number(m[2]);
-        else { offset = Number(m[1]); if (m[2] !== "") length = Number(m[2]) - offset + 1; }
-        if (m[1] === "") length = Number(m[2]);
-        else if (m[2] === "") length = size - offset;
+        if (m[1] === "") {
+          // bytes=-N. R2 resolves a suffix to an offset before reporting it.
+          length = Number(m[2]);
+          offset = size - length;
+        } else {
+          offset = Number(m[1]);
+          length = m[2] === "" ? size - offset : Number(m[2]) - offset + 1;
+        }
         slice = body.slice(offset, offset + length);
       }
       const range = { offset, length, suffix: undefined };
@@ -136,6 +139,13 @@ const settle = () => Promise.allSettled(tasks.splice(0));
 const resetCache = () => { store.clear(); reads.length = 0; tasks.length = 0; };
 
 const get = (p, init) => worker.fetch(new Request(`https://buildinfos.pkg.haus${p}`, init), env, ctx);
+
+// R2 unreachable, whichever call the request makes.
+const brokenBucket = {
+  async get() { throw new Error("R2 is having a moment"); },
+  async head() { throw new Error("R2 is having a moment"); },
+  async list() { throw new Error("R2 is having a moment"); },
+};
 
 test("content types are what a browser should render, not download", () => {
   assert.equal(contentType("x.buildinfo"), "text/plain; charset=utf-8");
@@ -235,6 +245,10 @@ test("writes are refused outright", async () => {
 });
 
 test("every response carries the security headers", async () => {
+  // Declared before the first resetCache() below, so without this the
+  // request is answered by an entry an earlier test left behind and
+  // serve() never runs.
+  resetCache();
   for (const p of ["/", "/buildinfo-pool/", "/buildinfo-pool.list"]) {
     const h = (await get(p)).headers;
     assert.equal(h.get("x-content-type-options"), "nosniff", p);
@@ -257,6 +271,10 @@ test("rendered pages escape what comes out of the bucket", () => {
 // from trusting the response over the request.
 
 test("a plain GET is a 200, however R2 reports the range it served", async () => {
+  // Declared before the first resetCache() below, so without this the
+  // request is answered by an entry an earlier test left behind and
+  // serve() never runs.
+  resetCache();
   const r = await get("/buildinfo-pool/c/croc/croc_11.3.6-1.dsc");
   assert.equal(r.status, 200, "R2 sets .range on every result; only the client's "
     + "Range header may turn a response into a partial");
@@ -306,6 +324,10 @@ test("HEAD asks R2 for no slice and returns no body", async () => {
 });
 
 test("every served record advertises that ranges work", async () => {
+  // Declared before the first resetCache() below, so without this the
+  // request is answered by an entry an earlier test left behind and
+  // serve() never runs.
+  resetCache();
   const r = await get("/buildinfo-pool/c/croc/croc_11.3.6-1.dsc");
   assert.equal(r.headers.get("accept-ranges"), "bytes");
 });
@@ -345,6 +367,10 @@ test("a segment cannot inject markup into the header", () => {
 });
 
 test("every page carries the header, and listings carry it once", async () => {
+  // Declared before the first resetCache() below, so without this the
+  // request is answered by an entry an earlier test left behind and
+  // serve() never runs.
+  resetCache();
   const listing = await (await get("/buildinfo-pool/c/croc/")).text();
   assert.equal(listing.split("<header>").length - 1, 1);
   assert.match(listing, /<h1><a href="\/">buildinfos/);
@@ -630,6 +656,25 @@ test("a malformed percent-escape is 400, not a thrown 500", async () => {
 });
 
 // Every HTML response on this host carries these.
+test("a control character in the path is 400, not a cache-key collision", async () => {
+  resetCache();
+  // Splicing the decoded path into a URL sends it back through the WHATWG
+  // parser, which strips tab, LF and CR from anywhere and trims the rest of
+  // C0 off the ends. Two distinct paths then share one cache key, so a
+  // garbled spelling 404s on a cold edge and serves a real record on a warm
+  // one. Warm the real path first: without the guard the second request is a
+  // 200 carrying that record's body.
+  assert.equal((await get("/buildinfo-pool/c/croc/croc_11.3.6-1.dsc")).status, 200);
+  for (const p of [
+    "/buildinfo-pool/c/croc/%0Acroc_11.3.6-1.dsc",
+    "/buildinfo-pool/c/croc/croc_11.3.6-1%09.dsc",
+    "/%00",
+    "/%0A",
+  ]) {
+    assert.equal((await get(p)).status, 400, p);
+  }
+});
+
 test("both error pages carry the security headers", async () => {
   resetCache();
   for (const p of ["/%", "/buildinfo-pool/c/croc/nope.buildinfo"]) {
@@ -756,25 +801,15 @@ test("titles follow the estate's two shapes", async () => {
 // a 500 is not retryable and a 404 would claim the record does not exist.
 test("an R2 read that throws is a 503, not a 500 or a 404", async () => {
   resetCache();
-  const broken = {
-    async get() { throw new Error("R2 is having a moment"); },
-    async head() { throw new Error("R2 is having a moment"); },
-    async list() { throw new Error("R2 is having a moment"); },
-  };
   const r = await worker.fetch(
     new Request("https://buildinfos.pkg.haus/buildinfo-pool/c/croc/croc_1.0-1_amd64.buildinfo"),
-    { ARCHIVE: broken }, ctx);
+    { ARCHIVE: brokenBucket }, ctx);
   assert.equal(r.status, 503);
 });
 
 test("an R2 list that throws on a listing page is a 503 too", async () => {
   resetCache();
-  const broken = {
-    async get() { throw new Error("R2 is having a moment"); },
-    async head() { throw new Error("R2 is having a moment"); },
-    async list() { throw new Error("R2 is having a moment"); },
-  };
   const r = await worker.fetch(
-    new Request("https://buildinfos.pkg.haus/buildinfo-pool/"), { ARCHIVE: broken }, ctx);
+    new Request("https://buildinfos.pkg.haus/buildinfo-pool/"), { ARCHIVE: brokenBucket }, ctx);
   assert.equal(r.status, 503);
 });
