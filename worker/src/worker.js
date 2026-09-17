@@ -279,13 +279,12 @@ export function breadcrumb(rel) {
 }
 
 function header(rel, tagline) {
-  return `<header>${MARK}<h1>${breadcrumb(rel ?? "")}</h1>`
+  return `<header>${MARK}<h1>${breadcrumb(rel)}</h1>`
     + (tagline ? `<p class="tagline">${tagline}</p>` : "") + `</header>`;
 }
 
 export function renderRoot(listBytes) {
-  const body = header("", "Build records for the pkg.haus archive: what each "
-    + "package was built from, and with.") +
+  const body = header("", DESCRIPTION) +
     rows([
       { name: POOL, href: POOL, size: "-" },
       { name: LIST_FILE, href: LIST_FILE, size: humanSize(listBytes) },
@@ -362,9 +361,9 @@ async function htmlSecurityHeaders() {
   return htmlHeaders;
 }
 
-async function html(bodyText, maxAge, status = 200) {
+async function html(bodyText, maxAge) {
   return new Response(bodyText, {
-    status,
+    status: 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": `public, max-age=${maxAge}`,
@@ -387,6 +386,15 @@ export function isUnsatisfiableRange(e) {
   return msg.includes("range is not satisfiable") || msg.includes("10039");
 }
 
+// The flat index: every key relative to the prefix, one per line. The root
+// page prints this file's size, so both come from here. Two expressions for
+// the same bytes agree only by coincidence -- change the separator or drop the
+// trailing newline and the size on the root page goes quietly wrong on a page
+// nobody re-reads.
+function listBody(objects) {
+  return objects.map((o) => o.key.slice(PREFIX.length)).sort().join("\n") + "\n";
+}
+
 export default {
   async fetch(request, env, ctx) {
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -403,6 +411,14 @@ export default {
     } catch {
       return badRequest();
     }
+
+    // A C0 control does not survive the URL parse below: tab, LF and CR are
+    // stripped from anywhere in the input and the rest are trimmed off the
+    // ends. Two distinct request paths would then share one cache key, so a
+    // garbled spelling 404s on a cold edge and serves a real record on a warm
+    // one -- the answer depending on cache warmth, which is the shape PR #4
+    // fixed on the precondition side. No key under this prefix contains one.
+    if (/[\x00-\x20#]/.test(path)) return badRequest();
 
     if (!env.ARCHIVE) return new Response("Not configured", { status: 503 });
 
@@ -485,7 +501,7 @@ async function serve(request, env, path) {
   // so it cannot drift from the pool it describes.
   if (path === `/${LIST_FILE}`) {
     const { objects } = await listAll(env.ARCHIVE, PREFIX + POOL);
-    const body = objects.map((o) => o.key.slice(PREFIX.length)).sort().join("\n") + "\n";
+    const body = listBody(objects);
     return new Response(body, {
       headers: {
         "content-type": "text/plain; charset=utf-8",
@@ -497,9 +513,7 @@ async function serve(request, env, path) {
 
   if (path === "/" || path === "") {
     const { objects } = await listAll(env.ARCHIVE, PREFIX + POOL);
-    const listBytes = objects.reduce(
-      (n, o) => n + o.key.slice(PREFIX.length).length + 1, 0);
-    return html(renderRoot(listBytes), LISTING_MAX_AGE);
+    return html(renderRoot(listBody(objects).length), LISTING_MAX_AGE);
   }
 
   if (!path.startsWith(`/${POOL}`)) return notFound();
