@@ -26,11 +26,12 @@ each gave a different wrong answer, because a `with:` block may carry other
 keys or a comment before the setting, and a wider window reaches into the next
 step.
 
-One file, copied verbatim into pkghaus/action-debian-build, pkghaus/buildinfos
-and pkghaus/infrastructure. There is no public home the estate's repos can
-share code through; it is small and stable enough for a copy to be the cheaper
-trade. Its tests live in pkghaus/action-debian-build
-(tests/test-yamlcheck.sh); change it there and copy the file to the other two.
+One file, copied verbatim into pkghaus/action-debian-build, pkghaus/buildinfos,
+pkghaus/infrastructure and pkghaus/reproducible. There is no public home the
+estate's repos can share code through; it is small and stable enough for a copy
+to be the cheaper trade. Its tests live in pkghaus/action-debian-build
+(tests/test-yamlcheck.sh); change it there and copy the file to the other
+three.
 """
 
 import re
