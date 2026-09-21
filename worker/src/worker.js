@@ -236,19 +236,19 @@ and the source beside it, then run the procedure from
 <a href="https://github.com/pkghaus/apt">pkghaus/apt</a>, which carries the
 container it needs:</p>
 <pre><span class="c"># the four files, all from one directory here</span>
-B=https://buildinfos.pkg.haus/buildinfo-pool/m/mandown
-mkdir mandown &amp;&amp; cd mandown
-curl -fsSLO "$B/mandown_1.0.5.2-2~haus13+1_amd64.buildinfo"
-curl -fsSLO "$B/mandown_1.0.5.2-2~haus13+1.dsc"
-curl -fsSLO "$B/mandown_1.0.5.2-2~haus13+1.debian.tar.xz"
-curl -fsSLO "$B/mandown_1.0.5.2.orig.tar.gz"
+B=https://buildinfos.pkg.haus/buildinfo-pool/b/berry
+mkdir berry &amp;&amp; cd berry
+curl -fsSLO "$B/berry_0.1.13-4~haus13+1_amd64.buildinfo"
+curl -fsSLO "$B/berry_0.1.13-4~haus13+1.dsc"
+curl -fsSLO "$B/berry_0.1.13-4~haus13+1.debian.tar.xz"
+curl -fsSLO "$B/berry_0.1.13.orig.tar.gz"
 cd ..
 
 <span class="c"># rebuild and compare</span>
 git clone https://github.com/pkghaus/apt
-apt/verify/rebuild.sh mandown</pre>
-<p>What a match looks like, run against this record on 2026-09-02:</p>
-<pre>checking mandown_1.0.5.2-2~haus13+1_amd64.deb: size... sha256... md5... sha1... all OK</pre>
+apt/verify/rebuild.sh berry</pre>
+<p>What a match looks like, run against this record on 2026-09-21:</p>
+<pre>checking berry_0.1.13-4~haus13+1_amd64.deb: size... sha256... md5... sha1... all OK</pre>
 <p>The rebuilt <code>.deb</code> was byte-identical to the one
 <a href="https://apt.pkg.haus">apt.pkg.haus</a> serves. You need Docker and root,
 because the rebuild installs an exact set of package versions and then builds;
