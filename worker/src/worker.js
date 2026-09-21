@@ -161,7 +161,8 @@ function footer() {
   const iso = now.toISOString().replace(/\.\d+Z$/, "Z");
   const stamp = iso.replace("T", " ").replace("Z", " UTC");
   return `<footer><a href="https://pkg.haus">pkg.haus</a>
-<a href="https://apt.pkg.haus">apt.pkg.haus</a>
+<a href="https://apt.pkg.haus">apt</a>
+<a href="https://reproducible.pkg.haus">reproducible</a>
 <a href="https://github.com/pkghaus">github.com/pkghaus</a>
 <span>listed <time datetime="${iso}">${stamp}</time></span>
 <span>Apache-2.0</span></footer>`;
