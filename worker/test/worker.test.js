@@ -785,6 +785,21 @@ test("every page's footer carries a UTC timestamp and localises it", async () =>
   }
 });
 
+// A sibling host is named by its label, the apex by its full name. Four full
+// hostnames plus a <time> measured about 800px in a 736px column and wrapped,
+// and a new host lengthens every footer in the estate at once -- so the rule
+// is enforced per host rather than left to whoever edits next.
+test("the footer names siblings by label and the apex in full", async () => {
+  resetCache();
+  const foot = /<footer>[\s\S]*?<\/footer>/.exec(await (await get("/")).text())[0];
+  assert.match(foot, /<a href="https:\/\/apt\.pkg\.haus">apt<\/a>/);
+  assert.match(foot, /<a href="https:\/\/reproducible\.pkg\.haus">reproducible<\/a>/);
+  assert.match(foot, /<a href="https:\/\/pkg\.haus">pkg\.haus<\/a>/);
+  assert.match(foot, /<a href="https:\/\/github\.com\/pkghaus">github\.com\/pkghaus<\/a>/);
+  // The host being read is not in its own footer.
+  assert.doesNotMatch(foot, /href="https:\/\/buildinfos\.pkg\.haus"/);
+});
+
 // Listing titles take the host-first breadcrumb shape apt.pkg.haus uses;
 // error pages keep the label shape, because they name a condition, not a path.
 test("titles follow the estate's two shapes", async () => {
