@@ -828,3 +828,29 @@ test("an R2 list that throws on a listing page is a 503 too", async () => {
     new Request("https://buildinfos.pkg.haus/buildinfo-pool/"), { ARCHIVE: brokenBucket }, ctx);
   assert.equal(r.status, 503);
 });
+
+// A section boundary is 3.5rem of gap with its rule in the middle, set
+// 2026-09-22 across this host, reproducible and the landing; stats already
+// had it. This host and reproducible were the 5.5rem pair; the landing was a
+// milder 4rem. Asserted on the rendered page rather than the source string,
+// because what ships is what a reader sees. the estate style registry has the why.
+test("a section boundary is 3.5rem with its rule centred", () => {
+  const html = renderRoot([], { targets: {} });
+  assert.match(html, /\.about\{[^}]*margin-top:1\.75rem[^}]*padding-top:1\.75rem/);
+  // The tablewrap next to a boundary adds nothing of its own. Its 1.5rem on
+  // top of the boundary's is what made the gap 5.5rem and pushed the rule to
+  // one side of it.
+  assert.match(html, /\.tablewrap:has\(\+ \.about\)\{padding-bottom:0\}/);
+  assert.doesNotMatch(html, /\.about\{[^}]*margin-top:2rem/);
+});
+
+// The section eyebrow. pkg.haus, stats and reproducible all set this rule;
+// buildinfos was the one surface with an h2 that did not, until 2026-09-22.
+// Asserted because a heading style is exactly the kind of thing that gets
+// "tidied" back to a plain size by someone who has not seen the siblings.
+test("section headings use the estate eyebrow", () => {
+  const html = renderRoot([], { targets: {} });
+  assert.match(html, /\.about h2\{[^}]*font-size:\.78rem/);
+  assert.match(html, /\.about h2\{[^}]*text-transform:uppercase/);
+  assert.match(html, /\.about h2::before\{content:"~ ";color:var\(--accent\)\}/);
+});

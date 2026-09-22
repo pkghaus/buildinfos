@@ -112,7 +112,11 @@ h1 a{color:inherit;text-decoration:none}
 h1 a:hover{text-decoration:underline;text-decoration-color:var(--accent);text-underline-offset:.18em;text-decoration-thickness:.07em}
 .tagline{flex-basis:100%;color:var(--muted);margin:.75rem 0 0;max-width:38rem}
 .tablewrap{overflow-x:auto;padding:1.5rem 0}
-.tablewrap:has(+ footer){padding-bottom:0}
+/* A tablewrap followed by a section boundary adds nothing of its own: the
+   boundary supplies the space. Without this a table ending a section sat
+   5.5rem from the next heading where stats.pkg.haus used 3.5rem, and the
+   rule was pushed to one side of the gap instead of sitting in it. */
+.tablewrap:has(+ footer),.tablewrap:has(+ .about){padding-bottom:0}
 table{border-collapse:collapse;width:100%;font-size:.92rem}
 th,td{text-align:left;padding:.5rem .75rem .5rem 0;
 border-bottom:1px dashed var(--line);vertical-align:top}
@@ -133,9 +137,18 @@ footer a:hover{color:var(--accent-text)}
 
 /* Only what the archive has no counterpart for: this host explains itself on
    its root page, which no listing page does. */
-.about{border-top:1px solid var(--line);margin-top:2rem;padding-top:2rem}
-.about h2{font-size:1.05rem;margin:1.75rem 0 .5rem}
+.about{border-top:1px solid var(--line);margin-top:1.75rem;padding-top:1.75rem}
+/* The section eyebrow, copied from apt.pkg.haus's descendants rather than
+   approximated: pkg.haus, stats and reproducible all set this exact rule, and
+   this host was the only one with an h2 that did not. It read as a heading
+   from a different site, and it is why the same 5.5rem gap under a table
+   looked roomier here than next door. The estate style registry is the
+   registry. */
+.about h2{font-family:var(--mono);font-size:.78rem;font-weight:600;
+letter-spacing:.16em;text-transform:uppercase;color:var(--muted);
+margin:1.75rem 0 .6rem}
 .about h2:first-child{margin-top:0}
+.about h2::before{content:"~ ";color:var(--accent)}
 .about p{margin:0 0 .9rem;max-width:38rem}
 .about>:last-child{margin-bottom:0}
 .about code{font-size:.9em}
