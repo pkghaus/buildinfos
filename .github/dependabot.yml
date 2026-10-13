@@ -1,9 +1,9 @@
 version: 2
 
 updates:
-  # Actions are pinned to commit SHAs and actionlint by image digest, which is
-  # what stops a moved tag changing what deploys this worker. It is also what
-  # stops any of them updating on their own.
+  # First-party actions stay on major tags and actionlint is pinned by image
+  # digest. The digest is what stops a moved image changing what lints this
+  # worker, and it stops that image updating on its own.
   - package-ecosystem: github-actions
     directory: /
     schedule:
