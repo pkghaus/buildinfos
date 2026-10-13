@@ -307,12 +307,11 @@ export function renderRoot(listBytes) {
 }
 
 export function renderListing(path, dirs, files) {
-  const parts = path.replace(/^\/|\/$/g, "").split("/");
+  const rel = path.replace(/^\/|\/$/g, "");
   const entries = [{ name: "../", href: "../", size: "-" }]
     .concat(dirs.map((d) => ({ name: d, href: d, size: "-" })))
     .concat(files.map((f) => ({ name: f.name, href: f.name, size: humanSize(f.size) })));
-  return page(`buildinfos.pkg.haus/${parts.join("/")}/`,
-    header(parts.join("/")) + rows(entries));
+  return page(`buildinfos.pkg.haus/${rel}/`, header(rel) + rows(entries));
 }
 
 // Both no-object endings, in this host's own furniture. One helper so the two
@@ -375,12 +374,12 @@ async function htmlSecurityHeaders() {
   return htmlHeaders;
 }
 
-async function html(bodyText, maxAge) {
+async function html(bodyText) {
   return new Response(bodyText, {
     status: 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
-      "cache-control": `public, max-age=${maxAge}`,
+      "cache-control": `public, max-age=${LISTING_MAX_AGE}`,
       ...(await htmlSecurityHeaders()),
     },
   });
@@ -527,7 +526,7 @@ async function serve(request, env, path) {
 
   if (path === "/" || path === "") {
     const { objects } = await listAll(env.ARCHIVE, PREFIX + POOL);
-    return html(renderRoot(listBody(objects).length), LISTING_MAX_AGE);
+    return html(renderRoot(listBody(objects).length));
   }
 
   if (!path.startsWith(`/${POOL}`)) return notFound();
@@ -542,7 +541,7 @@ async function serve(request, env, path) {
       .map((o) => ({ name: o.key.slice(prefix.length), size: o.size }))
       .filter((f) => f.name !== "")
       .sort((a, b) => a.name.localeCompare(b.name));
-    return html(renderListing(path, dirs, files), LISTING_MAX_AGE);
+    return html(renderListing(path, dirs, files));
   }
 
   const key = PREFIX + path.slice(1);
@@ -609,15 +608,10 @@ async function serve(request, env, path) {
     return new Response(object.body, { status: 206, headers });
   }
 
-  // HEAD carries the size or it tells the caller nothing, which is the
-  // main reason to send one. The 200 path below sets it from the body.
-  if (request.method === "HEAD") {
-    headers.set("content-length", String(object.size));
-    return new Response(null, { status: 200, headers });
-  }
-
+  // A HEAD carries the size or it tells the caller nothing, which is the main
+  // reason to send one.
   headers.set("content-length", String(object.size));
-  return new Response(object.body, { status: 200, headers });
+  return new Response(request.method === "HEAD" ? null : object.body, { status: 200, headers });
 }
 
 // Measured against live R2, all four cases: the result's range is always
